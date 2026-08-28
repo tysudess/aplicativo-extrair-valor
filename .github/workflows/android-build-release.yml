@@ -47,27 +47,29 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-ALTA-QUALIDADE.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-ALTA-QUALIDADE-3-PDFS-GMAIL.apk"
 
       - name: Publicar GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Extrator Valor Android v${{ env.VERSION }} — Alta Qualidade
+          name: Extrator Valor Android v${{ env.VERSION }} — 3 PDFs separados + Gmail
           target_commitish: main
           make_latest: true
           overwrite_files: true
           body: |
-            Versão focada em melhorar significativamente a definição das páginas 1, 2 e 3.
+            Versão v0.5 mantendo a alta qualidade aprovada da v0.4 e alterando a saída para arquivos separados.
 
-            - Testa escalas maiores no PressReader/PRCDN: 312, 286, 260, 234, 208 e demais fallbacks.
-            - Testa também larguras explícitas de até 2800 px quando o endpoint autorizado aceita esse modo.
-            - Mede a imagem realmente recebida e mantém a opção de maior resolução.
-            - Busca aproximadamente 2000 px de largura ou mais por página quando disponibilizado pela sessão autorizada.
-            - A melhoria vale para a página 1, página 2 e página 3.
-            - Mantém tickets e credenciais apenas em memória.
-            - Continua gerando um único PDF em Downloads/ExtratorValor.
-            - Preserva a configuração de envio por Apps Script/Gmail.
+            - Mantém a busca HD das páginas 1, 2 e 3.
+            - Gera três PDFs separados:
+              - Valor-Economico-AAAA-MM-DD-Pagina-1.pdf
+              - Valor-Economico-AAAA-MM-DD-Pagina-2.pdf
+              - Valor-Economico-AAAA-MM-DD-Pagina-3.pdf
+            - Salva os três arquivos em Downloads/ExtratorValor.
+            - Envia os três PDFs como anexos separados em um único e-mail do Gmail.
+            - O Apps Script v0.5 aceita os três anexos no mesmo POST.
+            - Mantém tickets e credenciais da sessão apenas em memória.
+            - Preserva o modo de diagnóstico sanitizado.
 
-            Se o servidor limitar uma página, o app testa todas as variantes HD antes de usar a melhor disponível.
+            Para o envio automático, atualize/reimplante o Apps Script com o arquivo apps-script-Code.gs desta versão e mantenha DEST_EMAIL e APP_SECRET configurados nas Script Properties.
           files: dist/*.apk
