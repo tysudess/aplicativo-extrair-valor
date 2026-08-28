@@ -47,26 +47,27 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-CALIBRACAO-AMPLIADA.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-PDF-AUTOMATICO.apk"
 
       - name: Publicar GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Extrator Valor Android v${{ env.VERSION }} — Calibração ampliada
+          name: Extrator Valor Android v${{ env.VERSION }} — PDF automático
           target_commitish: main
           make_latest: true
           overwrite_files: true
           body: |
-            Segunda etapa de calibração do Extrator Valor Android.
+            Terceira etapa do Extrator Valor Android.
 
-            - Identifica a edição e as páginas 1, 2 e 3 do Valor Econômico no PressReader.
-            - Captura recursos vistos pelo WebView via shouldInterceptRequest e onLoadResource.
-            - Observa requisições de Service Worker.
-            - Coleta recursos já carregados pela página usando a Performance API do JavaScript.
-            - Inclui domínios CDN do PressReader/PRCDN no diagnóstico.
-            - Não exporta cookies, senhas ou cabeçalhos de autenticação.
-            - Tokens, tickets e parâmetros sensíveis permanecem ocultados.
+            - Usa a sessão autorizada do PressReader já aberta no WebView.
+            - Navega automaticamente pelas páginas 1, 2 e 3 da edição atual.
+            - Identifica internamente as URLs reais das imagens do PressReader/PRCDN.
+            - Mantém tickets e credenciais somente em memória e não os exporta no diagnóstico.
+            - Baixa a melhor imagem autorizada disponível para cada página.
+            - Gera um PDF único em Downloads/ExtratorValor.
+            - Permite configurar um Web App do Google Apps Script para enviar o PDF automaticamente por Gmail.
+            - Mantém o modo de diagnóstico sanitizado para ajustes futuros.
 
-            Após o teste, envie o novo TXT gerado pelo app para identificarmos a URL/estrutura de imagem das páginas e avançarmos para PDF + envio automático por e-mail.
+            Para o envio automático por Gmail, configure DEST_EMAIL e APP_SECRET nas Script Properties do Apps Script e informe no app a URL do Web App e o mesmo APP_SECRET.
           files: dist/*.apk
