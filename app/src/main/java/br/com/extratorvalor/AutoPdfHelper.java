@@ -22,9 +22,16 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 final class AutoPdfHelper {
+    private static final int TARGET_WIDTH = 2000;
+    private static final int MIN_USEFUL_WIDTH = 1400;
+    private static final int[] HIGH_SCALES = {312, 286, 260, 234, 208, 182, 156, 130, 104};
+    private static final int[] HIGH_WIDTHS = {2800, 2500, 2200, 2000, 1800, 1600};
+
     static final class PdfResult {
         final byte[] bytes;
         final Uri uri;
@@ -38,48 +45,88 @@ final class AutoPdfHelper {
 
     static Bitmap downloadBitmap(String rawUrl, String userAgent, String referer) throws Exception {
         Exception first = null;
+        Bitmap best = null;
+        long bestPixels = 0;
+
         for (String candidate : candidates(rawUrl)) {
+            HttpURLConnection con = null;
             try {
-                HttpURLConnection con = (HttpURLConnection) new URL(candidate).openConnection();
+                con = (HttpURLConnection) new URL(candidate).openConnection();
                 con.setConnectTimeout(20000);
-                con.setReadTimeout(30000);
+                con.setReadTimeout(45000);
                 con.setInstanceFollowRedirects(true);
+                con.setUseCaches(false);
                 con.setRequestProperty("User-Agent", userAgent);
                 con.setRequestProperty("Referer", referer);
+                con.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8");
+                con.setRequestProperty("Cache-Control", "no-cache");
                 String cookies = CookieManager.getInstance().getCookie(candidate);
                 if (cookies != null && !cookies.isEmpty()) con.setRequestProperty("Cookie", cookies);
+
                 int code = con.getResponseCode();
                 if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
+
+                Bitmap bm;
                 try (InputStream in = con.getInputStream()) {
-                    Bitmap bm = BitmapFactory.decodeStream(in);
-                    if (bm == null) throw new IllegalStateException("imagem inválida");
-                    return bm;
-                } finally {
-                    con.disconnect();
+                    BitmapFactory.Options options = new BitmapFactory.Options();
+                    options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                    bm = BitmapFactory.decodeStream(in, null, options);
                 }
+                if (bm == null) throw new IllegalStateException("imagem inválida");
+
+                long pixels = (long) bm.getWidth() * (long) bm.getHeight();
+                if (pixels > bestPixels) {
+                    if (best != null && best != bm && !best.isRecycled()) best.recycle();
+                    best = bm;
+                    bestPixels = pixels;
+                } else if (bm != best && !bm.isRecycled()) {
+                    bm.recycle();
+                }
+
+                // Assim que atingirmos uma largura realmente alta, usamos esta imagem.
+                if (best != null && best.getWidth() >= TARGET_WIDTH) return best;
             } catch (Exception e) {
-                first = e;
+                if (first == null) first = e;
+            } finally {
+                if (con != null) con.disconnect();
             }
+        }
+
+        if (best != null) {
+            // Ainda retornamos a melhor opção disponível, mas somente após testar todas as variantes HD.
+            return best;
         }
         throw first != null ? first : new IllegalStateException("URL de imagem inválida");
     }
 
     private static List<String> candidates(String rawUrl) {
-        ArrayList<String> out = new ArrayList<>();
+        Set<String> unique = new LinkedHashSet<>();
         try {
             Uri in = Uri.parse(rawUrl);
-            String scale = in.getQueryParameter("scale");
-            if (scale != null) {
-                Uri.Builder b = in.buildUpon().clearQuery();
-                for (String name : in.getQueryParameterNames()) {
-                    if ("scale".equalsIgnoreCase(name)) b.appendQueryParameter(name, "104");
-                    else for (String v : in.getQueryParameters(name)) b.appendQueryParameter(name, v);
+            String path = in.getPath();
+            if (path != null && path.contains("/img")) {
+                // Primeiro tenta escalas grandes. Preserva ticket e demais parâmetros da sessão.
+                for (int scale : HIGH_SCALES) {
+                    unique.add(replaceSizing(in, "scale", String.valueOf(scale)));
                 }
-                out.add(b.build().toString());
+                // Depois tenta largura explícita, útil principalmente no host de thumbnails.
+                for (int width : HIGH_WIDTHS) {
+                    unique.add(replaceSizing(in, "width", String.valueOf(width)));
+                }
             }
         } catch (Exception ignored) {}
-        if (!out.contains(rawUrl)) out.add(rawUrl);
-        return out;
+        unique.add(rawUrl);
+        return new ArrayList<>(unique);
+    }
+
+    private static String replaceSizing(Uri in, String param, String value) {
+        Uri.Builder b = in.buildUpon().clearQuery();
+        for (String name : in.getQueryParameterNames()) {
+            if ("scale".equalsIgnoreCase(name) || "width".equalsIgnoreCase(name)) continue;
+            for (String v : in.getQueryParameters(name)) b.appendQueryParameter(name, v);
+        }
+        b.appendQueryParameter(param, value);
+        return b.build().toString();
     }
 
     static PdfResult createAndSavePdf(ContentResolver resolver, Bitmap[] pages, String fileName) throws Exception {
