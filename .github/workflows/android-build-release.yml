@@ -47,23 +47,26 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-CALIBRACAO.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-CALIBRACAO-AMPLIADA.apk"
 
       - name: Publicar GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Extrator Valor Android v${{ env.VERSION }} — Calibração
+          name: Extrator Valor Android v${{ env.VERSION }} — Calibração ampliada
           target_commitish: main
           make_latest: true
           overwrite_files: true
           body: |
-            Primeira versão de calibração do Extrator Valor Android.
+            Segunda etapa de calibração do Extrator Valor Android.
 
-            - Abre o Valor Econômico no PressReader usando a sessão normal autorizada do aparelho.
-            - Permite marcar as páginas 1, 2 e 3.
-            - Exporta um diagnóstico sanitizado para identificar o método correto de obtenção das páginas.
+            - Identifica a edição e as páginas 1, 2 e 3 do Valor Econômico no PressReader.
+            - Captura recursos vistos pelo WebView via shouldInterceptRequest e onLoadResource.
+            - Observa requisições de Service Worker.
+            - Coleta recursos já carregados pela página usando a Performance API do JavaScript.
+            - Inclui domínios CDN do PressReader/PRCDN no diagnóstico.
             - Não exporta cookies, senhas ou cabeçalhos de autenticação.
+            - Tokens, tickets e parâmetros sensíveis permanecem ocultados.
 
-            Após o teste, envie o TXT gerado pelo app para avançarmos para a extração automática + PDF + envio por e-mail.
+            Após o teste, envie o novo TXT gerado pelo app para identificarmos a URL/estrutura de imagem das páginas e avançarmos para PDF + envio automático por e-mail.
           files: dist/*.apk
