@@ -47,27 +47,27 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-PDF-AUTOMATICO.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-ALTA-QUALIDADE.apk"
 
       - name: Publicar GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Extrator Valor Android v${{ env.VERSION }} — PDF automático
+          name: Extrator Valor Android v${{ env.VERSION }} — Alta Qualidade
           target_commitish: main
           make_latest: true
           overwrite_files: true
           body: |
-            Terceira etapa do Extrator Valor Android.
+            Versão focada em melhorar significativamente a definição das páginas 1, 2 e 3.
 
-            - Usa a sessão autorizada do PressReader já aberta no WebView.
-            - Navega automaticamente pelas páginas 1, 2 e 3 da edição atual.
-            - Identifica internamente as URLs reais das imagens do PressReader/PRCDN.
-            - Mantém tickets e credenciais somente em memória e não os exporta no diagnóstico.
-            - Baixa a melhor imagem autorizada disponível para cada página.
-            - Gera um PDF único em Downloads/ExtratorValor.
-            - Permite configurar um Web App do Google Apps Script para enviar o PDF automaticamente por Gmail.
-            - Mantém o modo de diagnóstico sanitizado para ajustes futuros.
+            - Testa escalas maiores no PressReader/PRCDN: 312, 286, 260, 234, 208 e demais fallbacks.
+            - Testa também larguras explícitas de até 2800 px quando o endpoint autorizado aceita esse modo.
+            - Mede a imagem realmente recebida e mantém a opção de maior resolução.
+            - Busca aproximadamente 2000 px de largura ou mais por página quando disponibilizado pela sessão autorizada.
+            - A melhoria vale para a página 1, página 2 e página 3.
+            - Mantém tickets e credenciais apenas em memória.
+            - Continua gerando um único PDF em Downloads/ExtratorValor.
+            - Preserva a configuração de envio por Apps Script/Gmail.
 
-            Para o envio automático por Gmail, configure DEST_EMAIL e APP_SECRET nas Script Properties do Apps Script e informe no app a URL do Web App e o mesmo APP_SECRET.
+            Se o servidor limitar uma página, o app testa todas as variantes HD antes de usar a melhor disponível.
           files: dist/*.apk
