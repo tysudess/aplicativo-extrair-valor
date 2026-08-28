@@ -11,6 +11,7 @@ import android.provider.MediaStore;
 import android.util.Base64;
 import android.webkit.CookieManager;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -28,7 +29,6 @@ import java.util.Set;
 
 final class AutoPdfHelper {
     private static final int TARGET_WIDTH = 2000;
-    private static final int MIN_USEFUL_WIDTH = 1400;
     private static final int[] HIGH_SCALES = {312, 286, 260, 234, 208, 182, 156, 130, 104};
     private static final int[] HIGH_WIDTHS = {2800, 2500, 2200, 2000, 1800, 1600};
 
@@ -36,6 +36,7 @@ final class AutoPdfHelper {
         final byte[] bytes;
         final Uri uri;
         final String fileName;
+
         PdfResult(byte[] bytes, Uri uri, String fileName) {
             this.bytes = bytes;
             this.uri = uri;
@@ -83,7 +84,6 @@ final class AutoPdfHelper {
                     bm.recycle();
                 }
 
-                // Assim que atingirmos uma largura realmente alta, usamos esta imagem.
                 if (best != null && best.getWidth() >= TARGET_WIDTH) return best;
             } catch (Exception e) {
                 if (first == null) first = e;
@@ -92,10 +92,7 @@ final class AutoPdfHelper {
             }
         }
 
-        if (best != null) {
-            // Ainda retornamos a melhor opção disponível, mas somente após testar todas as variantes HD.
-            return best;
-        }
+        if (best != null) return best;
         throw first != null ? first : new IllegalStateException("URL de imagem inválida");
     }
 
@@ -105,11 +102,9 @@ final class AutoPdfHelper {
             Uri in = Uri.parse(rawUrl);
             String path = in.getPath();
             if (path != null && path.contains("/img")) {
-                // Primeiro tenta escalas grandes. Preserva ticket e demais parâmetros da sessão.
                 for (int scale : HIGH_SCALES) {
                     unique.add(replaceSizing(in, "scale", String.valueOf(scale)));
                 }
-                // Depois tenta largura explícita, útil principalmente no host de thumbnails.
                 for (int width : HIGH_WIDTHS) {
                     unique.add(replaceSizing(in, "width", String.valueOf(width)));
                 }
@@ -129,56 +124,90 @@ final class AutoPdfHelper {
         return b.build().toString();
     }
 
-    static PdfResult createAndSavePdf(ContentResolver resolver, Bitmap[] pages, String fileName) throws Exception {
-        PdfDocument doc = new PdfDocument();
+    static PdfResult[] createAndSaveSeparatePdfs(ContentResolver resolver, Bitmap[] pages, String[] fileNames) throws Exception {
+        if (pages == null || fileNames == null || pages.length != 3 || fileNames.length != 3) {
+            throw new IllegalArgumentException("São necessárias exatamente 3 páginas e 3 nomes de arquivo");
+        }
+
+        PdfResult[] results = new PdfResult[3];
         try {
-            for (int i = 0; i < pages.length; i++) {
+            for (int i = 0; i < 3; i++) {
                 Bitmap bm = pages[i];
                 if (bm == null) throw new IllegalStateException("Página " + (i + 1) + " ausente");
-                int w = Math.max(1, bm.getWidth());
-                int h = Math.max(1, bm.getHeight());
-                PdfDocument.PageInfo info = new PdfDocument.PageInfo.Builder(w, h, i + 1).create();
-                PdfDocument.Page page = doc.startPage(info);
-                page.getCanvas().drawBitmap(bm, 0, 0, null);
-                doc.finishPage(page);
+                byte[] bytes = createSinglePagePdfBytes(bm);
+                Uri uri = savePdf(resolver, bytes, fileNames[i]);
+                results[i] = new PdfResult(bytes, uri, fileNames[i]);
             }
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            doc.writeTo(bos);
-            byte[] bytes = bos.toByteArray();
-
-            ContentValues values = new ContentValues();
-            values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
-            values.put(MediaStore.Downloads.MIME_TYPE, "application/pdf");
-            values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/ExtratorValor");
-            Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-            if (uri == null) throw new IllegalStateException("não foi possível criar o PDF");
-            try (OutputStream os = resolver.openOutputStream(uri)) {
-                if (os == null) throw new IllegalStateException("não foi possível abrir o PDF");
-                os.write(bytes);
-            }
-            return new PdfResult(bytes, uri, fileName);
+            return results;
         } finally {
-            doc.close();
-            for (Bitmap bm : pages) if (bm != null && !bm.isRecycled()) bm.recycle();
+            for (Bitmap bm : pages) {
+                if (bm != null && !bm.isRecycled()) bm.recycle();
+            }
         }
     }
 
-    static String sendToAppsScript(String endpoint, String secret, PdfResult pdf) throws Exception {
+    private static byte[] createSinglePagePdfBytes(Bitmap bm) throws Exception {
+        PdfDocument doc = new PdfDocument();
+        try {
+            int w = Math.max(1, bm.getWidth());
+            int h = Math.max(1, bm.getHeight());
+            PdfDocument.PageInfo info = new PdfDocument.PageInfo.Builder(w, h, 1).create();
+            PdfDocument.Page page = doc.startPage(info);
+            page.getCanvas().drawBitmap(bm, 0, 0, null);
+            doc.finishPage(page);
+
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            doc.writeTo(bos);
+            return bos.toByteArray();
+        } finally {
+            doc.close();
+        }
+    }
+
+    private static Uri savePdf(ContentResolver resolver, byte[] bytes, String fileName) throws Exception {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
+        values.put(MediaStore.Downloads.MIME_TYPE, "application/pdf");
+        values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/ExtratorValor");
+        Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+        if (uri == null) throw new IllegalStateException("não foi possível criar " + fileName);
+        try (OutputStream os = resolver.openOutputStream(uri)) {
+            if (os == null) throw new IllegalStateException("não foi possível abrir " + fileName);
+            os.write(bytes);
+        }
+        return uri;
+    }
+
+    static String sendToAppsScript(String endpoint, String secret, PdfResult[] pdfs) throws Exception {
+        if (pdfs == null || pdfs.length != 3) {
+            throw new IllegalArgumentException("São necessários os 3 PDFs para o envio");
+        }
+
         JSONObject body = new JSONObject();
         body.put("secret", secret);
-        body.put("pdfBase64", Base64.encodeToString(pdf.bytes, Base64.NO_WRAP));
-        body.put("fileName", pdf.fileName);
-        body.put("subject", "Valor Econômico - páginas 1 a 3");
-        body.put("message", "Segue em anexo o PDF automático com as três primeiras páginas da edição autorizada do Valor Econômico.");
+        body.put("subject", "Valor Econômico - páginas 1, 2 e 3");
+        body.put("message", "Seguem em anexo, em arquivos separados, as três primeiras páginas da edição autorizada do Valor Econômico.");
+
+        JSONArray files = new JSONArray();
+        for (PdfResult pdf : pdfs) {
+            JSONObject item = new JSONObject();
+            item.put("fileName", pdf.fileName);
+            item.put("pdfBase64", Base64.encodeToString(pdf.bytes, Base64.NO_WRAP));
+            files.put(item);
+        }
+        body.put("files", files);
 
         HttpURLConnection con = (HttpURLConnection) new URL(endpoint).openConnection();
         con.setConnectTimeout(20000);
-        con.setReadTimeout(30000);
+        con.setReadTimeout(45000);
         con.setRequestMethod("POST");
         con.setDoOutput(true);
         con.setRequestProperty("Content-Type", "application/json; charset=utf-8");
         byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
-        try (OutputStream os = con.getOutputStream()) { os.write(payload); }
+        try (OutputStream os = con.getOutputStream()) {
+            os.write(payload);
+        }
+
         int code = con.getResponseCode();
         InputStream stream = code >= 200 && code < 400 ? con.getInputStream() : con.getErrorStream();
         StringBuilder sb = new StringBuilder();
@@ -189,9 +218,12 @@ final class AutoPdfHelper {
             }
         }
         con.disconnect();
+
         if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code + " " + sb);
         JSONObject result = new JSONObject(sb.toString());
-        if (!result.optBoolean("ok", false)) throw new IllegalStateException(result.optString("error", "falha no envio"));
+        if (!result.optBoolean("ok", false)) {
+            throw new IllegalStateException(result.optString("error", "falha no envio"));
+        }
         return "ok";
     }
 
