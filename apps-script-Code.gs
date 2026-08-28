@@ -1,21 +1,23 @@
 /**
  * Extrator Valor Android v0.5 — envio de 3 PDFs separados.
  *
- * Configure em Project Settings > Script properties:
- *   DEST_EMAIL = destinatario@exemplo.com
+ * Destinatário fixo:
+ *   imprensa30.monitoramento@gmail.com
+ *
+ * Configure em Project Settings > Script properties apenas:
  *   APP_SECRET = uma_chave_longa_aleatoria
  *
  * Implante como Web App executando como você.
  */
 function doPost(e) {
   try {
+    const DEST_EMAIL = 'imprensa30.monitoramento@gmail.com';
     const props = PropertiesService.getScriptProperties();
-    const dest = props.getProperty('DEST_EMAIL');
     const expectedSecret = props.getProperty('APP_SECRET');
     const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
 
-    if (!dest || !expectedSecret) {
-      return json_({ ok: false, error: 'Script properties não configuradas.' });
+    if (!expectedSecret) {
+      return json_({ ok: false, error: 'APP_SECRET não configurado.' });
     }
     if (body.secret !== expectedSecret) {
       return json_({ ok: false, error: 'Não autorizado.' });
@@ -46,12 +48,13 @@ function doPost(e) {
     const subject = body.subject || ('Valor Econômico - páginas 1, 2 e 3 - ' + date);
     const message = body.message || 'Seguem em anexo, em arquivos separados, as três primeiras páginas da edição autorizada do Valor Econômico.';
 
-    GmailApp.sendEmail(dest, subject, message, {
+    GmailApp.sendEmail(DEST_EMAIL, subject, message, {
       attachments: attachments
     });
 
     return json_({
       ok: true,
+      email: DEST_EMAIL,
       attachments: attachments.length
     });
   } catch (err) {
