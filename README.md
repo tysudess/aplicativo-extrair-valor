@@ -22,6 +22,9 @@ Primeira etapa do projeto para automatizar a obtenção das páginas 1, 2 e 3 do
 8. Toque **EXPORTAR**.
 9. Envie o TXT gerado no chat para análise.
 
+## Build e Release
+O workflow `.github/workflows/android-build-release.yml` compila o APK no GitHub Actions e publica automaticamente o APK em **GitHub Releases** usando a versão definida em `app/build.gradle`.
+
 ## Próxima versão
 A partir do diagnóstico, a v0.2 será fechada com o método específico de obtenção das três páginas. Só depois disso será ativado o fluxo diário em segundo plano + PDF + envio automático por e-mail.
 
