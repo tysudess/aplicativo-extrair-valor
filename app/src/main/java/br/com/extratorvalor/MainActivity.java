@@ -1,8 +1,10 @@
 package br.com.extratorvalor;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
@@ -21,6 +23,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -30,7 +33,9 @@ import org.json.JSONArray;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -38,23 +43,34 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
     private static final String VALOR_URL = "https://valoreconomico.pressreader.com/valor-economico";
+    private static final Pattern EDITION_PATTERN = Pattern.compile("/valor-economico/(\\d{8})/page/\\d+");
+    private static final String PREFS = "extrator_valor";
+    private static final String PREF_ENDPOINT = "apps_script_url";
+    private static final String PREF_SECRET = "apps_script_secret";
 
     private WebView webView;
     private TextView status;
     private final Map<String, Set<String>> captured = new LinkedHashMap<>();
-    private final java.util.ArrayList<String> markers = new java.util.ArrayList<>();
+    private final ArrayList<String> markers = new ArrayList<>();
+    private final Map<Integer, String> bestImageUrl = new HashMap<>();
+    private final Map<Integer, Integer> bestImageScore = new HashMap<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean recording = false;
+    private boolean autoInProgress = false;
+    private String editionDate;
+    private String userAgent;
+    private AutoPdfHelper.PdfResult lastPdf;
 
     private final Runnable performancePoll = new Runnable() {
-        @Override
-        public void run() {
+        @Override public void run() {
             if (recording && webView != null) {
                 collectPerformanceEntries();
-                handler.postDelayed(this, 1500);
+                handler.postDelayed(this, 1200);
             }
         }
     };
@@ -68,30 +84,35 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.WHITE);
 
         TextView title = new TextView(this);
-        title.setText("Extrator Valor • Calibração ampliada");
+        title.setText("Extrator Valor • PDF 1–3");
         title.setTextSize(20);
         title.setTextColor(Color.BLACK);
-        title.setPadding(24, 20, 24, 12);
+        title.setPadding(24, 20, 24, 8);
         root.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         status = new TextView(this);
-        status.setText("Abra o Valor, faça login normalmente e depois inicie a calibração.");
+        status.setText("Abra o Valor e faça login normalmente. Depois toque GERAR PDF 1–3.");
         status.setTextSize(14);
-        status.setPadding(24, 0, 24, 12);
+        status.setPadding(24, 0, 24, 10);
         root.addView(status, new LinearLayout.LayoutParams(-1, -2));
 
-        LinearLayout controls = new LinearLayout(this);
-        controls.setOrientation(LinearLayout.HORIZONTAL);
-        controls.setGravity(Gravity.CENTER_VERTICAL);
-        controls.setPadding(12, 0, 12, 8);
+        LinearLayout row1 = controlsRow();
+        row1.addView(button("ABRIR VALOR", v -> webView.loadUrl(VALOR_URL)));
+        row1.addView(button("GERAR PDF 1–3", v -> startAutoPdf()));
+        root.addView(row1, new LinearLayout.LayoutParams(-1, -2));
 
-        controls.addView(button("ABRIR VALOR", v -> webView.loadUrl(VALOR_URL)));
-        controls.addView(button("INICIAR", v -> startRecording()));
-        controls.addView(button("P1", v -> markPage(1)));
-        controls.addView(button("P2", v -> markPage(2)));
-        controls.addView(button("P3", v -> markPage(3)));
-        controls.addView(button("EXPORTAR", v -> exportDiagnostic()));
-        root.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout row2 = controlsRow();
+        row2.addView(button("CONFIG E-MAIL", v -> showEmailConfig()));
+        row2.addView(button("ENVIAR ÚLTIMO", v -> sendLastPdf()));
+        row2.addView(button("EXPORTAR LOG", v -> exportDiagnostic()));
+        root.addView(row2, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout row3 = controlsRow();
+        row3.addView(button("INICIAR LOG", v -> startRecording()));
+        row3.addView(button("P1", v -> markPage(1)));
+        row3.addView(button("P2", v -> markPage(2)));
+        row3.addView(button("P3", v -> markPage(3)));
+        root.addView(row3, new LinearLayout.LayoutParams(-1, -2));
 
         webView = new WebView(this);
         webView.setBackgroundColor(Color.WHITE);
@@ -100,7 +121,8 @@ public class MainActivity extends Activity {
         webView.getSettings().setDatabaseEnabled(true);
         webView.getSettings().setLoadsImagesAutomatically(true);
         webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
-        webView.getSettings().setUserAgentString(webView.getSettings().getUserAgentString() + " ExtratorValor/0.2");
+        userAgent = webView.getSettings().getUserAgentString() + " ExtratorValor/0.3";
+        webView.getSettings().setUserAgentString(userAgent);
         webView.addJavascriptInterface(new JsBridge(), "ExtratorValorBridge");
 
         CookieManager cm = CookieManager.getInstance();
@@ -109,54 +131,48 @@ public class MainActivity extends Activity {
 
         try {
             ServiceWorkerController.getInstance().setServiceWorkerClient(new ServiceWorkerClient() {
-                @Override
-                public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
-                    if (recording && request != null && request.getUrl() != null) {
-                        capture(request.getUrl().toString(), "SERVICE_WORKER");
-                    }
+                @Override public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                    if (recording && request != null && request.getUrl() != null) capture(request.getUrl().toString(), "SERVICE_WORKER");
                     return null;
                 }
             });
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) {}
 
         webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return false;
-            }
+            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { return false; }
 
-            @Override
-            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                if (recording && request != null && request.getUrl() != null) {
-                    capture(request.getUrl().toString(), "INTERCEPT");
-                }
+            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (recording && request != null && request.getUrl() != null) capture(request.getUrl().toString(), "INTERCEPT");
                 return super.shouldInterceptRequest(view, request);
             }
 
-            @Override
-            public void onLoadResource(WebView view, String url) {
+            @Override public void onLoadResource(WebView view, String url) {
                 super.onLoadResource(view, url);
                 if (recording && url != null) capture(url, "LOAD_RESOURCE");
             }
 
-            @Override
-            public void onPageFinished(WebView view, String url) {
+            @Override public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 if (recording) {
                     capture(url, "TOP_PAGE");
                     installJavascriptObserver();
                     collectPerformanceEntries();
-                    status.setText("Calibração ativa • navegue pelas páginas 1, 2 e 3 e marque cada uma.");
-                } else {
-                    status.setText("Página carregada. Faça login/abra a edição e toque INICIAR.");
                 }
+                if (!autoInProgress) status.setText("Página carregada. Toque GERAR PDF 1–3 para iniciar.");
             }
         });
 
         root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
         setContentView(root);
         webView.loadUrl(VALOR_URL);
+    }
+
+    private LinearLayout controlsRow() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(12, 0, 12, 6);
+        return row;
     }
 
     private Button button(String text, View.OnClickListener listener) {
@@ -171,11 +187,168 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    private void startRecording() {
-        synchronized (captured) {
-            captured.clear();
-        }
+    private void startAutoPdf() {
+        if (autoInProgress) return;
+        bestImageUrl.clear();
+        bestImageScore.clear();
+        synchronized (captured) { captured.clear(); }
         markers.clear();
+        recording = true;
+        autoInProgress = true;
+        markers.add("AUTO_INICIO " + now());
+        handler.removeCallbacks(performancePoll);
+        handler.post(performancePoll);
+
+        editionDate = extractEditionDate(webView.getUrl());
+        if (editionDate == null) {
+            status.setText("Localizando a edição atual do Valor...");
+            webView.loadUrl(VALOR_URL);
+            handler.postDelayed(() -> {
+                editionDate = extractEditionDate(webView.getUrl());
+                if (editionDate == null) failAuto("Não consegui identificar a edição. Abra a edição do dia e tente novamente.");
+                else visitAutoPage(1);
+            }, 5000);
+        } else {
+            visitAutoPage(1);
+        }
+    }
+
+    private void visitAutoPage(int page) {
+        if (!autoInProgress) return;
+        String url = VALOR_URL + "/" + editionDate + "/page/" + page;
+        status.setText("Carregando página " + page + " de 3...");
+        markers.add("AUTO_PAGINA_" + page + " " + now());
+        webView.loadUrl(url);
+        handler.postDelayed(() -> {
+            collectPerformanceEntries();
+            capture(webView.getUrl(), "TOP_PAGE");
+            if (page < 3) handler.postDelayed(() -> visitAutoPage(page + 1), 1200);
+            else handler.postDelayed(this::finishAutoPdf, 2500);
+        }, 4500);
+    }
+
+    private void finishAutoPdf() {
+        if (!autoInProgress) return;
+        collectPerformanceEntries();
+        handler.postDelayed(() -> {
+            recording = false;
+            handler.removeCallbacks(performancePoll);
+            String[] urls = new String[3];
+            for (int i = 1; i <= 3; i++) urls[i - 1] = bestImageUrl.get(i);
+            for (int i = 0; i < 3; i++) {
+                if (urls[i] == null) {
+                    failAuto("Não encontrei a imagem autorizada da página " + (i + 1) + ". Use EXPORTAR LOG e me envie o TXT.");
+                    return;
+                }
+            }
+            status.setText("Imagens localizadas. Gerando PDF...");
+            final String date = editionDate;
+            new Thread(() -> buildPdfInBackground(urls, date)).start();
+        }, 1800);
+    }
+
+    private void buildPdfInBackground(String[] urls, String date) {
+        try {
+            android.graphics.Bitmap[] bitmaps = new android.graphics.Bitmap[3];
+            String referer = VALOR_URL + "/" + date + "/page/1";
+            for (int i = 0; i < 3; i++) {
+                final int p = i + 1;
+                runOnUiThread(() -> status.setText("Baixando página " + p + " em alta qualidade..."));
+                bitmaps[i] = AutoPdfHelper.downloadBitmap(urls[i], userAgent, referer);
+            }
+            String formatted = date.substring(0,4) + "-" + date.substring(4,6) + "-" + date.substring(6,8);
+            String name = "Valor-Economico-" + formatted + "-Paginas-1-a-3.pdf";
+            lastPdf = AutoPdfHelper.createAndSavePdf(getContentResolver(), bitmaps, name);
+
+            SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+            String endpoint = sp.getString(PREF_ENDPOINT, "");
+            String secret = sp.getString(PREF_SECRET, "");
+            if (!endpoint.isEmpty() && !secret.isEmpty()) {
+                runOnUiThread(() -> status.setText("PDF salvo. Enviando por e-mail..."));
+                AutoPdfHelper.sendToAppsScript(endpoint, secret, lastPdf);
+                runOnUiThread(() -> status.setText("Concluído: PDF salvo e e-mail enviado."));
+            } else {
+                runOnUiThread(() -> status.setText("PDF salvo em Downloads/ExtratorValor. Configure o e-mail para envio automático."));
+            }
+        } catch (Exception e) {
+            runOnUiThread(() -> status.setText("Erro ao gerar PDF: " + e.getMessage()));
+        } finally {
+            runOnUiThread(() -> autoInProgress = false);
+        }
+    }
+
+    private void failAuto(String message) {
+        recording = false;
+        autoInProgress = false;
+        handler.removeCallbacks(performancePoll);
+        status.setText(message);
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    private void showEmailConfig() {
+        SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = 30;
+        box.setPadding(pad, 10, pad, 0);
+
+        EditText endpoint = new EditText(this);
+        endpoint.setHint("URL do Web App do Apps Script");
+        endpoint.setText(sp.getString(PREF_ENDPOINT, ""));
+        box.addView(endpoint);
+
+        EditText secret = new EditText(this);
+        secret.setHint("APP_SECRET");
+        secret.setText(sp.getString(PREF_SECRET, ""));
+        box.addView(secret);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Configurar envio automático")
+                .setView(box)
+                .setMessage("O destinatário fica configurado nas Script Properties do Apps Script. O app salva apenas a URL do Web App e o segredo deste projeto no aparelho.")
+                .setPositiveButton("SALVAR", (d, w) -> {
+                    sp.edit().putString(PREF_ENDPOINT, endpoint.getText().toString().trim())
+                            .putString(PREF_SECRET, secret.getText().toString()).apply();
+                    Toast.makeText(this, "Configuração salva", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("CANCELAR", null)
+                .show();
+    }
+
+    private void sendLastPdf() {
+        if (lastPdf == null) {
+            Toast.makeText(this, "Gere um PDF primeiro", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String endpoint = sp.getString(PREF_ENDPOINT, "");
+        String secret = sp.getString(PREF_SECRET, "");
+        if (endpoint.isEmpty() || secret.isEmpty()) {
+            showEmailConfig();
+            return;
+        }
+        status.setText("Enviando último PDF...");
+        new Thread(() -> {
+            try {
+                AutoPdfHelper.sendToAppsScript(endpoint, secret, lastPdf);
+                runOnUiThread(() -> status.setText("E-mail enviado com sucesso."));
+            } catch (Exception e) {
+                runOnUiThread(() -> status.setText("Falha no envio: " + e.getMessage()));
+            }
+        }).start();
+    }
+
+    private String extractEditionDate(String url) {
+        if (url == null) return null;
+        Matcher m = EDITION_PATTERN.matcher(url);
+        return m.find() ? m.group(1) : null;
+    }
+
+    private void startRecording() {
+        synchronized (captured) { captured.clear(); }
+        markers.clear();
+        bestImageUrl.clear();
+        bestImageScore.clear();
         recording = true;
         markers.add("INICIO " + now());
         capture(webView.getUrl(), "TOP_PAGE");
@@ -183,45 +356,27 @@ public class MainActivity extends Activity {
         collectPerformanceEntries();
         handler.removeCallbacks(performancePoll);
         handler.post(performancePoll);
-        status.setText("Calibração ativa. Deixe a página 1 visível e toque P1; depois P2 e P3.");
-        Toast.makeText(this, "Calibração ampliada iniciada", Toast.LENGTH_SHORT).show();
+        status.setText("Log ativo. Navegue pelas páginas e marque P1/P2/P3.");
     }
 
     private void markPage(int page) {
-        if (!recording) {
-            Toast.makeText(this, "Toque INICIAR primeiro", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
+        if (!recording) { Toast.makeText(this, "Toque INICIAR LOG primeiro", Toast.LENGTH_SHORT).show(); return; }
         collectPerformanceEntries();
         capture(webView.getUrl(), "TOP_PAGE");
-
         int count;
-        synchronized (captured) {
-            count = captured.size();
-        }
+        synchronized (captured) { count = captured.size(); }
         markers.add("PAGINA " + page + " " + now() + " RECURSOS=" + count + " URL=" + sanitizeUrl(webView.getUrl()));
-        status.setText("Página " + page + " marcada • " + count + " recursos registrados.");
-
+        status.setText("Página " + page + " marcada • " + count + " recursos.");
         if (page == 3) {
             recording = false;
             handler.removeCallbacks(performancePoll);
-            status.setText("Calibração concluída. Toque EXPORTAR e envie o TXT neste chat.");
+            status.setText("Log concluído. Toque EXPORTAR LOG.");
         }
     }
 
     private void installJavascriptObserver() {
         if (webView == null) return;
-        String script = "(function(){try{"
-                + "if(window.__extratorValorObserver){return;}"
-                + "window.__extratorValorObserver=true;"
-                + "function evSend(){try{"
-                + "var r=(performance.getEntriesByType('resource')||[]).map(function(e){return e.name;});"
-                + "ExtratorValorBridge.reportResources(JSON.stringify(r));"
-                + "ExtratorValorBridge.reportLocation(location.href);"
-                + "}catch(e){}}"
-                + "setInterval(evSend,1200);evSend();"
-                + "}catch(e){}})();";
+        String script = "(function(){try{if(window.__extratorValorObserver){return;}window.__extratorValorObserver=true;function evSend(){try{var r=(performance.getEntriesByType('resource')||[]).map(function(e){return e.name;});ExtratorValorBridge.reportResources(JSON.stringify(r));ExtratorValorBridge.reportLocation(location.href);}catch(e){}}setInterval(evSend,1000);evSend();}catch(e){}})();";
         webView.evaluateJavascript(script, null);
     }
 
@@ -232,8 +387,7 @@ public class MainActivity extends Activity {
     }
 
     private class JsBridge {
-        @JavascriptInterface
-        public void reportResources(String json) {
+        @JavascriptInterface public void reportResources(String json) {
             if (!recording || json == null) return;
             try {
                 JSONArray arr = new JSONArray(json);
@@ -241,45 +395,57 @@ public class MainActivity extends Activity {
                     String value = arr.optString(i, null);
                     if (value != null) capture(value, "JS_PERFORMANCE");
                 }
-            } catch (Exception ignored) {
-            }
+            } catch (Exception ignored) {}
         }
-
-        @JavascriptInterface
-        public void reportLocation(String url) {
+        @JavascriptInterface public void reportLocation(String url) {
             if (recording && url != null) capture(url, "JS_LOCATION");
         }
     }
 
     private void capture(String rawUrl, String source) {
         if (!recording || rawUrl == null || rawUrl.isEmpty()) return;
+        rememberImageCandidate(rawUrl);
         String url = sanitizeUrl(rawUrl);
         if (!isUseful(url)) return;
         synchronized (captured) {
             Set<String> sources = captured.get(url);
-            if (sources == null) {
-                sources = new LinkedHashSet<>();
-                captured.put(url, sources);
-            }
+            if (sources == null) { sources = new LinkedHashSet<>(); captured.put(url, sources); }
             sources.add(source);
         }
     }
 
+    private void rememberImageCandidate(String rawUrl) {
+        try {
+            Uri u = Uri.parse(rawUrl);
+            String host = u.getHost();
+            if (host == null || !host.endsWith("prcdn.co") || !u.getPath().contains("/img")) return;
+            String pageValue = u.getQueryParameter("page");
+            String file = u.getQueryParameter("file");
+            if (pageValue == null || file == null) return;
+            int page = Integer.parseInt(pageValue);
+            if (page < 1 || page > 3) return;
+            int score = host.startsWith("i.") ? 100000 : 10000;
+            score += safeInt(u.getQueryParameter("scale")) * 100;
+            score += safeInt(u.getQueryParameter("width"));
+            Integer old = bestImageScore.get(page);
+            if (old == null || score > old) {
+                bestImageScore.put(page, score);
+                bestImageUrl.put(page, rawUrl);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private int safeInt(String value) {
+        try { return value == null ? 0 : Integer.parseInt(value); }
+        catch (Exception e) { return 0; }
+    }
+
     private boolean isUseful(String url) {
         String u = url.toLowerCase(Locale.ROOT);
-        return u.contains("pressreader")
-                || u.contains("pressdisplay")
-                || u.contains("newspaperdirect")
-                || u.contains("prcdn.co")
-                || u.contains("/services/")
-                || u.contains("/img?")
-                || u.contains("/page")
-                || u.contains("issue")
-                || u.contains("tile")
-                || u.endsWith(".jpg")
-                || u.endsWith(".jpeg")
-                || u.endsWith(".png")
-                || u.endsWith(".webp");
+        return u.contains("pressreader") || u.contains("pressdisplay") || u.contains("newspaperdirect")
+                || u.contains("prcdn.co") || u.contains("/services/") || u.contains("/img?")
+                || u.contains("/page") || u.contains("issue") || u.contains("tile")
+                || u.endsWith(".jpg") || u.endsWith(".jpeg") || u.endsWith(".png") || u.endsWith(".webp");
     }
 
     private String sanitizeUrl(String url) {
@@ -287,24 +453,16 @@ public class MainActivity extends Activity {
         try {
             Uri in = Uri.parse(url);
             Uri.Builder out = in.buildUpon().clearQuery();
-            Set<String> names = in.getQueryParameterNames();
             Set<String> safeNames = new HashSet<>();
-            java.util.Collections.addAll(safeNames,
-                    "issue", "page", "pagenumber", "pagenumbers", "paper", "file",
-                    "top", "left", "width", "height", "scale", "scaletolandscape",
-                    "zoom", "date", "publication", "locale", "lang", "language",
-                    "format", "quality", "preview");
-            for (String name : names) {
-                String lower = name.toLowerCase(Locale.ROOT);
-                if (safeNames.contains(lower)) {
-                    List<String> vals = in.getQueryParameters(name);
-                    for (String v : vals) out.appendQueryParameter(name, v);
-                } else {
-                    out.appendQueryParameter(name, "[REDACTED]");
-                }
+            java.util.Collections.addAll(safeNames, "issue", "page", "pagenumber", "pagenumbers", "paper", "file",
+                    "top", "left", "width", "height", "scale", "scaletolandscape", "zoom", "date", "publication",
+                    "locale", "lang", "language", "format", "quality", "preview");
+            for (String name : in.getQueryParameterNames()) {
+                if (safeNames.contains(name.toLowerCase(Locale.ROOT))) {
+                    for (String v : in.getQueryParameters(name)) out.appendQueryParameter(name, v);
+                } else out.appendQueryParameter(name, "[REDACTED]");
             }
-            String result = out.build().toString();
-            return result.replaceAll("(?<=/)[A-Za-z0-9_\\-\\.=]{80,}(?=/|\\?|$)", "[REDACTED]");
+            return out.build().toString().replaceAll("(?<=/)[A-Za-z0-9_\\-\\.=]{80,}(?=/|\\?|$)", "[REDACTED]");
         } catch (Exception e) {
             return url.replaceAll("(?i)(token|auth|key|session|signature|sig|ticket)=([^&]+)", "$1=[REDACTED]");
         }
@@ -312,24 +470,16 @@ public class MainActivity extends Activity {
 
     private String buildDiagnostic() {
         StringBuilder sb = new StringBuilder();
-        sb.append("Extrator Valor Android v0.2 - Calibracao ampliada\n");
-        sb.append("Gerado: ").append(now()).append("\n\n");
-        sb.append("MARCADORES\n");
+        sb.append("Extrator Valor Android v0.3 - Extracao PDF\n");
+        sb.append("Gerado: ").append(now()).append("\n\nMARCADORES\n");
         for (String m : markers) sb.append(m).append('\n');
         sb.append("\nRECURSOS CANDIDATOS\n");
         synchronized (captured) {
             for (Map.Entry<String, Set<String>> e : captured.entrySet()) {
-                sb.append('[');
-                boolean first = true;
-                for (String source : e.getValue()) {
-                    if (!first) sb.append(',');
-                    sb.append(source);
-                    first = false;
-                }
-                sb.append("] ").append(e.getKey()).append('\n');
+                sb.append('[').append(android.text.TextUtils.join(",", e.getValue())).append("] ").append(e.getKey()).append('\n');
             }
         }
-        sb.append("\nObservacao: cabecalhos/cookies/senhas nao sao exportados; parametros sensiveis conhecidos sao ocultados.\n");
+        sb.append("\nObservacao: tickets, cookies, senhas e cabecalhos de autenticacao nao sao exportados.\n");
         return sb.toString();
     }
 
@@ -341,12 +491,12 @@ public class MainActivity extends Activity {
             values.put(MediaStore.Downloads.MIME_TYPE, "text/plain");
             values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/ExtratorValor");
             Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-            if (uri == null) throw new IllegalStateException("Nao foi possivel criar o arquivo");
+            if (uri == null) throw new IllegalStateException("Não foi possível criar o arquivo");
             try (OutputStream os = getContentResolver().openOutputStream(uri)) {
-                if (os == null) throw new IllegalStateException("Nao foi possivel abrir o arquivo");
+                if (os == null) throw new IllegalStateException("Não foi possível abrir o arquivo");
                 os.write(buildDiagnostic().getBytes(StandardCharsets.UTF_8));
             }
-            status.setText("Diagnóstico salvo em Downloads/ExtratorValor/" + fileName);
+            status.setText("Log salvo em Downloads/ExtratorValor/" + fileName);
             Intent share = new Intent(Intent.ACTION_SEND);
             share.setType("text/plain");
             share.putExtra(Intent.EXTRA_STREAM, uri);
@@ -357,18 +507,14 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String now() {
-        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
-    }
+    private String now() { return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date()); }
 
-    @Override
-    protected void onDestroy() {
+    @Override protected void onDestroy() {
         handler.removeCallbacks(performancePoll);
         super.onDestroy();
     }
 
-    @Override
-    public void onBackPressed() {
+    @Override public void onBackPressed() {
         if (webView != null && webView.canGoBack()) webView.goBack();
         else super.onBackPressed();
     }
