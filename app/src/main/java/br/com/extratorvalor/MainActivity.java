@@ -1,17 +1,20 @@
 package br.com.extratorvalor;
 
 import android.app.Activity;
+import android.app.AlarmManager;
 import android.app.AlertDialog;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.webkit.CookieManager;
@@ -83,14 +86,14 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.WHITE);
 
         TextView title = new TextView(this);
-        title.setText("Extrator Valor • PDFs 1–3 + Gmail");
+        title.setText("Extrator Valor • AUTO 04:00 • Seg–Sex");
         title.setTextSize(20);
         title.setTextColor(Color.BLACK);
         title.setPadding(24, 20, 24, 8);
         root.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         status = new TextView(this);
-        status.setText("Apps Script configurado. Informe o APP_SECRET em CONFIG E-MAIL e depois gere os 3 PDFs.");
+        status.setText("Envio Gmail configurado. Para automatizar, toque ATIVAR AUTO 04:00. Finais de semana são ignorados.");
         status.setTextSize(14);
         status.setPadding(24, 0, 24, 10);
         root.addView(status, new LinearLayout.LayoutParams(-1, -2));
@@ -113,6 +116,11 @@ public class MainActivity extends Activity {
         row3.addView(button("P3", v -> markPage(3)));
         root.addView(row3, new LinearLayout.LayoutParams(-1, -2));
 
+        LinearLayout row4 = controlsRow();
+        row4.addView(button("ATIVAR AUTO 04:00", v -> enableDailyAutomation()));
+        row4.addView(button("DESATIVAR AUTO", v -> disableDailyAutomation()));
+        root.addView(row4, new LinearLayout.LayoutParams(-1, -2));
+
         webView = new WebView(this);
         webView.setBackgroundColor(Color.WHITE);
         webView.getSettings().setJavaScriptEnabled(true);
@@ -120,7 +128,7 @@ public class MainActivity extends Activity {
         webView.getSettings().setDatabaseEnabled(true);
         webView.getSettings().setLoadsImagesAutomatically(true);
         webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
-        userAgent = webView.getSettings().getUserAgentString() + " ExtratorValor/0.5.1";
+        userAgent = webView.getSettings().getUserAgentString() + " ExtratorValor/0.6.0";
         webView.getSettings().setUserAgentString(userAgent);
         webView.addJavascriptInterface(new JsBridge(), "ExtratorValorBridge");
 
@@ -163,13 +171,17 @@ public class MainActivity extends Activity {
                     installJavascriptObserver();
                     collectPerformanceEntries();
                 }
-                if (!autoInProgress) status.setText("Página carregada. Toque GERAR 3 PDFs para iniciar.");
+                if (!autoInProgress) status.setText("Página carregada. Automação: " + automationStatusText());
             }
         });
 
         root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
         setContentView(root);
         webView.loadUrl(VALOR_URL);
+
+        if (ScheduleHelper.isEnabled(this) && ScheduleHelper.canUseExactAlarms(this)) {
+            ScheduleHelper.scheduleNextWeekday0400(this);
+        }
     }
 
     private LinearLayout controlsRow() {
@@ -190,6 +202,48 @@ public class MainActivity extends Activity {
         lp.setMargins(3, 0, 3, 0);
         b.setLayoutParams(lp);
         return b;
+    }
+
+    private void enableDailyAutomation() {
+        String secret = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_SECRET, "");
+        if (secret == null || secret.trim().isEmpty()) {
+            Toast.makeText(this, "Configure primeiro o APP_SECRET em CONFIG E-MAIL", Toast.LENGTH_LONG).show();
+            showEmailConfig();
+            return;
+        }
+
+        ScheduleHelper.setEnabled(this, true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !ScheduleHelper.canUseExactAlarms(this)) {
+            status.setText("Automação ativada. Autorize 'Alarmes e lembretes' na tela do Android e volte ao app.");
+            try {
+                Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                        Uri.parse("package:" + getPackageName()));
+                startActivity(intent);
+            } catch (Exception e) {
+                Toast.makeText(this, "Abra Configurações > Acesso especial > Alarmes e lembretes e autorize o Extrator Valor.", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+
+        if (ScheduleHelper.scheduleNextWeekday0400(this)) {
+            status.setText("Automação ATIVA: segunda a sexta às 04:00. Sábado e domingo não executa.");
+            Toast.makeText(this, "Automação 04:00 ativada", Toast.LENGTH_SHORT).show();
+        } else {
+            status.setText("Não consegui programar o alarme. Verifique a permissão de Alarmes e lembretes.");
+        }
+    }
+
+    private void disableDailyAutomation() {
+        ScheduleHelper.setEnabled(this, false);
+        ScheduleHelper.cancelAll(this);
+        status.setText("Automação 04:00 DESATIVADA.");
+        Toast.makeText(this, "Automação desativada", Toast.LENGTH_SHORT).show();
+    }
+
+    private String automationStatusText() {
+        if (!ScheduleHelper.isEnabled(this)) return "desativada";
+        if (!ScheduleHelper.canUseExactAlarms(this)) return "aguardando permissão de Alarmes e lembretes";
+        return "ativa, seg–sex às 04:00";
     }
 
     private void startAutoPdf() {
@@ -489,7 +543,7 @@ public class MainActivity extends Activity {
 
     private String buildDiagnostic() {
         StringBuilder sb = new StringBuilder();
-        sb.append("Extrator Valor Android v0.5.1 - Apps Script integrado\n");
+        sb.append("Extrator Valor Android v0.6.0 - Auto 04:00 Seg-Sex\n");
         sb.append("Gerado: ").append(now()).append("\n\nMARCADORES\n");
         for (String m : markers) sb.append(m).append('\n');
         sb.append("\nRECURSOS CANDIDATOS\n");
@@ -528,6 +582,14 @@ public class MainActivity extends Activity {
 
     private String now() {
         return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (ScheduleHelper.isEnabled(this) && ScheduleHelper.canUseExactAlarms(this)) {
+            ScheduleHelper.scheduleNextWeekday0400(this);
+            if (status != null) status.setText("Automação ATIVA: segunda a sexta às 04:00. Sábado e domingo não executa.");
+        }
     }
 
     @Override protected void onDestroy() {

@@ -47,25 +47,32 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-APPS-SCRIPT-INTEGRADO.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-AUTO-04H-SEG-SEX.apk"
 
       - name: Publicar GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Extrator Valor Android v${{ env.VERSION }} — Apps Script integrado
+          name: Extrator Valor Android v${{ env.VERSION }} — Automático 04:00 Seg–Sex
           target_commitish: main
           make_latest: true
           overwrite_files: true
           body: |
-            Versão com o Web App do Google Apps Script já integrado ao Android.
+            Versão automática do Extrator Valor Android.
 
-            - Mantém a alta qualidade aprovada das páginas 1, 2 e 3.
-            - Gera três PDFs separados.
-            - Envia os três PDFs em um único e-mail.
-            - Destino configurado no Apps Script: imprensa30.monitoramento@gmail.com.
-            - Assunto configurado no Apps Script: Monitoramento: CAPAS DE JORNAIS.
-            - A URL do Web App já vem gravada no aplicativo.
-            - No Android, basta informar uma vez o mesmo APP_SECRET cadastrado no Apps Script.
-            - Tickets e credenciais do PressReader continuam somente em memória.
+            - Mantém a alta qualidade das páginas 1, 2 e 3.
+            - Mantém os três PDFs separados no mesmo e-mail do Gmail.
+            - Execução automática às 04:00, somente de segunda a sexta-feira.
+            - Sábado e domingo não executa e não envia e-mail.
+            - Se a edição ainda não estiver disponível, tenta novamente às 04:10, 04:20 e 04:30.
+            - Nunca envia se não localizar corretamente as três páginas da edição do dia.
+            - Reagenda o próximo dia útil após cada execução.
+            - Reprograma o alarme depois de reiniciar o aparelho ou atualizar o aplicativo.
+            - Usa serviço em primeiro plano para continuar o processamento com a tela apagada.
+            - Apps Script já integrado ao aplicativo.
+            - Destino: imprensa30.monitoramento@gmail.com
+            - Assunto: Monitoramento: CAPAS DE JORNAIS
+
+            Após instalar, abra o app uma vez, confirme o APP_SECRET e toque em ATIVAR AUTO 04:00.
+            Em Android 12 ou superior, autorize o acesso especial a Alarmes e lembretes quando solicitado.
           files: dist/*.apk
