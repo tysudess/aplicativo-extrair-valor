@@ -39,7 +39,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -48,9 +47,9 @@ import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
     private static final String VALOR_URL = "https://valoreconomico.pressreader.com/valor-economico";
+    private static final String APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbym5coRJNiFDbcc1yJojOSdy56rTzB8-0RZ4qRWQkT_ME-s1Z77_kNKQkYs7YK0Al5N/exec";
     private static final Pattern EDITION_PATTERN = Pattern.compile("/valor-economico/(\\d{8})/page/\\d+");
     private static final String PREFS = "extrator_valor";
-    private static final String PREF_ENDPOINT = "apps_script_url";
     private static final String PREF_SECRET = "apps_script_secret";
 
     private WebView webView;
@@ -84,14 +83,14 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.WHITE);
 
         TextView title = new TextView(this);
-        title.setText("Extrator Valor • PDFs 1–3");
+        title.setText("Extrator Valor • PDFs 1–3 + Gmail");
         title.setTextSize(20);
         title.setTextColor(Color.BLACK);
         title.setPadding(24, 20, 24, 8);
         root.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         status = new TextView(this);
-        status.setText("Abra o Valor e faça login normalmente. Depois toque GERAR 3 PDFs.");
+        status.setText("Apps Script configurado. Informe o APP_SECRET em CONFIG E-MAIL e depois gere os 3 PDFs.");
         status.setTextSize(14);
         status.setPadding(24, 0, 24, 10);
         root.addView(status, new LinearLayout.LayoutParams(-1, -2));
@@ -121,7 +120,7 @@ public class MainActivity extends Activity {
         webView.getSettings().setDatabaseEnabled(true);
         webView.getSettings().setLoadsImagesAutomatically(true);
         webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
-        userAgent = webView.getSettings().getUserAgentString() + " ExtratorValor/0.5";
+        userAgent = webView.getSettings().getUserAgentString() + " ExtratorValor/0.5.1";
         webView.getSettings().setUserAgentString(userAgent);
         webView.addJavascriptInterface(new JsBridge(), "ExtratorValorBridge");
 
@@ -164,9 +163,7 @@ public class MainActivity extends Activity {
                     installJavascriptObserver();
                     collectPerformanceEntries();
                 }
-                if (!autoInProgress) {
-                    status.setText("Página carregada. Toque GERAR 3 PDFs para iniciar.");
-                }
+                if (!autoInProgress) status.setText("Página carregada. Toque GERAR 3 PDFs para iniciar.");
             }
         });
 
@@ -233,11 +230,8 @@ public class MainActivity extends Activity {
         handler.postDelayed(() -> {
             collectPerformanceEntries();
             capture(webView.getUrl(), "TOP_PAGE");
-            if (page < 3) {
-                handler.postDelayed(() -> visitAutoPage(page + 1), 1200);
-            } else {
-                handler.postDelayed(this::finishAutoPdf, 2500);
-            }
+            if (page < 3) handler.postDelayed(() -> visitAutoPage(page + 1), 1200);
+            else handler.postDelayed(this::finishAutoPdf, 2500);
         }, 4500);
     }
 
@@ -281,15 +275,13 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> status.setText("Gerando PDFs separados..."));
             lastPdfs = AutoPdfHelper.createAndSaveSeparatePdfs(getContentResolver(), bitmaps, names);
 
-            SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
-            String endpoint = sp.getString(PREF_ENDPOINT, "");
-            String secret = sp.getString(PREF_SECRET, "");
-            if (!endpoint.isEmpty() && !secret.isEmpty()) {
-                runOnUiThread(() -> status.setText("3 PDFs salvos. Enviando os 3 anexos por e-mail..."));
-                AutoPdfHelper.sendToAppsScript(endpoint, secret, lastPdfs);
-                runOnUiThread(() -> status.setText("Concluído: 3 PDFs separados salvos e enviados no mesmo e-mail."));
+            String secret = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_SECRET, "");
+            if (!secret.isEmpty()) {
+                runOnUiThread(() -> status.setText("3 PDFs salvos. Enviando para o Gmail..."));
+                AutoPdfHelper.sendToAppsScript(APPS_SCRIPT_URL, secret, lastPdfs);
+                runOnUiThread(() -> status.setText("Concluído: 3 PDFs separados enviados por Gmail."));
             } else {
-                runOnUiThread(() -> status.setText("3 PDFs separados salvos em Downloads/ExtratorValor. Configure o e-mail para envio automático."));
+                runOnUiThread(() -> status.setText("3 PDFs salvos. Informe o APP_SECRET em CONFIG E-MAIL para envio automático."));
             }
         } catch (Exception e) {
             runOnUiThread(() -> status.setText("Erro ao gerar/enviar PDFs: " + e.getMessage()));
@@ -310,13 +302,12 @@ public class MainActivity extends Activity {
         SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        int pad = 30;
-        box.setPadding(pad, 10, pad, 0);
+        box.setPadding(30, 10, 30, 0);
 
-        EditText endpoint = new EditText(this);
-        endpoint.setHint("URL do Web App do Apps Script");
-        endpoint.setText(sp.getString(PREF_ENDPOINT, ""));
-        box.addView(endpoint);
+        TextView info = new TextView(this);
+        info.setText("Apps Script: configurado\nDestino: imprensa30.monitoramento@gmail.com\nAssunto: Monitoramento: CAPAS DE JORNAIS");
+        info.setPadding(0, 0, 0, 12);
+        box.addView(info);
 
         EditText secret = new EditText(this);
         secret.setHint("APP_SECRET");
@@ -326,13 +317,10 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("Configurar envio automático")
                 .setView(box)
-                .setMessage("O destinatário fica configurado nas Script Properties do Apps Script. O app salva apenas a URL do Web App e o segredo deste projeto no aparelho.")
+                .setMessage("Digite o mesmo APP_SECRET cadastrado nas Propriedades do script do Apps Script.")
                 .setPositiveButton("SALVAR", (d, w) -> {
-                    sp.edit()
-                            .putString(PREF_ENDPOINT, endpoint.getText().toString().trim())
-                            .putString(PREF_SECRET, secret.getText().toString())
-                            .apply();
-                    Toast.makeText(this, "Configuração salva", Toast.LENGTH_SHORT).show();
+                    sp.edit().putString(PREF_SECRET, secret.getText().toString()).apply();
+                    Toast.makeText(this, "APP_SECRET salvo no aparelho", Toast.LENGTH_SHORT).show();
                 })
                 .setNegativeButton("CANCELAR", null)
                 .show();
@@ -343,11 +331,8 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "Gere os 3 PDFs primeiro", Toast.LENGTH_SHORT).show();
             return;
         }
-
-        SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
-        String endpoint = sp.getString(PREF_ENDPOINT, "");
-        String secret = sp.getString(PREF_SECRET, "");
-        if (endpoint.isEmpty() || secret.isEmpty()) {
+        String secret = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_SECRET, "");
+        if (secret.isEmpty()) {
             showEmailConfig();
             return;
         }
@@ -355,7 +340,7 @@ public class MainActivity extends Activity {
         status.setText("Enviando os 3 PDFs no mesmo e-mail...");
         new Thread(() -> {
             try {
-                AutoPdfHelper.sendToAppsScript(endpoint, secret, lastPdfs);
+                AutoPdfHelper.sendToAppsScript(APPS_SCRIPT_URL, secret, lastPdfs);
                 runOnUiThread(() -> status.setText("E-mail enviado com 3 anexos separados."));
             } catch (Exception e) {
                 runOnUiThread(() -> status.setText("Falha no envio: " + e.getMessage()));
@@ -415,8 +400,7 @@ public class MainActivity extends Activity {
     }
 
     private class JsBridge {
-        @JavascriptInterface
-        public void reportResources(String json) {
+        @JavascriptInterface public void reportResources(String json) {
             if (!recording || json == null) return;
             try {
                 JSONArray arr = new JSONArray(json);
@@ -427,8 +411,7 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {}
         }
 
-        @JavascriptInterface
-        public void reportLocation(String url) {
+        @JavascriptInterface public void reportLocation(String url) {
             if (recording && url != null) capture(url, "JS_LOCATION");
         }
     }
@@ -452,7 +435,7 @@ public class MainActivity extends Activity {
         try {
             Uri u = Uri.parse(rawUrl);
             String host = u.getHost();
-            if (host == null || !host.endsWith("prcdn.co") || !u.getPath().contains("/img")) return;
+            if (host == null || !host.endsWith("prcdn.co") || u.getPath() == null || !u.getPath().contains("/img")) return;
             String pageValue = u.getQueryParameter("page");
             String file = u.getQueryParameter("file");
             if (pageValue == null || file == null) return;
@@ -470,28 +453,16 @@ public class MainActivity extends Activity {
     }
 
     private int safeInt(String value) {
-        try {
-            return value == null ? 0 : Integer.parseInt(value);
-        } catch (Exception e) {
-            return 0;
-        }
+        try { return value == null ? 0 : Integer.parseInt(value); }
+        catch (Exception e) { return 0; }
     }
 
     private boolean isUseful(String url) {
         String u = url.toLowerCase(Locale.ROOT);
-        return u.contains("pressreader")
-                || u.contains("pressdisplay")
-                || u.contains("newspaperdirect")
-                || u.contains("prcdn.co")
-                || u.contains("/services/")
-                || u.contains("/img?")
-                || u.contains("/page")
-                || u.contains("issue")
-                || u.contains("tile")
-                || u.endsWith(".jpg")
-                || u.endsWith(".jpeg")
-                || u.endsWith(".png")
-                || u.endsWith(".webp");
+        return u.contains("pressreader") || u.contains("pressdisplay") || u.contains("newspaperdirect")
+                || u.contains("prcdn.co") || u.contains("/services/") || u.contains("/img?")
+                || u.contains("/page") || u.contains("issue") || u.contains("tile")
+                || u.endsWith(".jpg") || u.endsWith(".jpeg") || u.endsWith(".png") || u.endsWith(".webp");
     }
 
     private String sanitizeUrl(String url) {
@@ -500,12 +471,9 @@ public class MainActivity extends Activity {
             Uri in = Uri.parse(url);
             Uri.Builder out = in.buildUpon().clearQuery();
             Set<String> safeNames = new HashSet<>();
-            java.util.Collections.addAll(
-                    safeNames,
-                    "issue", "page", "pagenumber", "pagenumbers", "paper", "file",
+            java.util.Collections.addAll(safeNames, "issue", "page", "pagenumber", "pagenumbers", "paper", "file",
                     "top", "left", "width", "height", "scale", "scaletolandscape", "zoom", "date", "publication",
-                    "locale", "lang", "language", "format", "quality", "preview"
-            );
+                    "locale", "lang", "language", "format", "quality", "preview");
             for (String name : in.getQueryParameterNames()) {
                 if (safeNames.contains(name.toLowerCase(Locale.ROOT))) {
                     for (String v : in.getQueryParameters(name)) out.appendQueryParameter(name, v);
@@ -521,17 +489,13 @@ public class MainActivity extends Activity {
 
     private String buildDiagnostic() {
         StringBuilder sb = new StringBuilder();
-        sb.append("Extrator Valor Android v0.5 - PDFs separados\n");
+        sb.append("Extrator Valor Android v0.5.1 - Apps Script integrado\n");
         sb.append("Gerado: ").append(now()).append("\n\nMARCADORES\n");
         for (String m : markers) sb.append(m).append('\n');
         sb.append("\nRECURSOS CANDIDATOS\n");
         synchronized (captured) {
             for (Map.Entry<String, Set<String>> e : captured.entrySet()) {
-                sb.append('[')
-                        .append(android.text.TextUtils.join(",", e.getValue()))
-                        .append("] ")
-                        .append(e.getKey())
-                        .append('\n');
+                sb.append('[').append(android.text.TextUtils.join(",", e.getValue())).append("] ").append(e.getKey()).append('\n');
             }
         }
         sb.append("\nObservacao: tickets, cookies, senhas e cabecalhos de autenticacao nao sao exportados.\n");
@@ -566,14 +530,12 @@ public class MainActivity extends Activity {
         return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
     }
 
-    @Override
-    protected void onDestroy() {
+    @Override protected void onDestroy() {
         handler.removeCallbacks(performancePoll);
         super.onDestroy();
     }
 
-    @Override
-    public void onBackPressed() {
+    @Override public void onBackPressed() {
         if (webView != null && webView.canGoBack()) webView.goBack();
         else super.onBackPressed();
     }
