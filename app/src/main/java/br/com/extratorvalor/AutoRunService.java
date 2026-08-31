@@ -8,11 +8,14 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.util.DisplayMetrics;
 import android.view.ContextThemeWrapper;
+import android.view.View;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
@@ -35,6 +38,8 @@ public class AutoRunService extends Service {
     private static final String PREF_LAST_AUTO_SENT = "last_auto_sent_date";
     private static final String CHANNEL_ID = "extrator_valor_auto";
     private static final int NOTIFICATION_ID = 4060;
+    private static final int MIN_RENDER_WIDTH = 1440;
+    private static final int MIN_RENDER_HEIGHT = 2400;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<Integer, String> bestImageUrl = new HashMap<>();
@@ -44,12 +49,14 @@ public class AutoRunService extends Service {
     private String editionDate;
     private int attempt;
     private boolean finished;
+    private int renderWidth = MIN_RENDER_WIDTH;
+    private int renderHeight = MIN_RENDER_HEIGHT;
 
     private final Runnable performancePoll = new Runnable() {
         @Override public void run() {
             if (!finished && webView != null) {
                 collectPerformanceEntries();
-                handler.postDelayed(this, 1200);
+                handler.postDelayed(this, 1000);
             }
         }
     };
@@ -83,10 +90,12 @@ public class AutoRunService extends Service {
             return START_NOT_STICKY;
         }
 
+        bestImageUrl.clear();
+        bestImageScore.clear();
         setupWebView();
-        updateNotification("Abrindo a sessão autorizada do PressReader...");
+        updateNotification("Abrindo a sessão autorizada do PressReader em modo HD...");
         webView.loadUrl(VALOR_URL);
-        handler.postDelayed(() -> visitPage(1), 5000);
+        handler.postDelayed(() -> visitPage(1), 7000);
         handler.post(performancePoll);
         return START_NOT_STICKY;
     }
@@ -99,7 +108,20 @@ public class AutoRunService extends Service {
         webView.getSettings().setDatabaseEnabled(true);
         webView.getSettings().setLoadsImagesAutomatically(true);
         webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
-        userAgent = webView.getSettings().getUserAgentString() + " ExtratorValor/0.6.0-AUTO";
+        webView.getSettings().setUseWideViewPort(true);
+        webView.getSettings().setLoadWithOverviewMode(false);
+        webView.getSettings().setOffscreenPreRaster(true);
+        webView.setInitialScale(180);
+
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        renderWidth = Math.max(MIN_RENDER_WIDTH, dm.widthPixels);
+        renderHeight = Math.max(MIN_RENDER_HEIGHT, dm.heightPixels);
+        int w = View.MeasureSpec.makeMeasureSpec(renderWidth, View.MeasureSpec.EXACTLY);
+        int h = View.MeasureSpec.makeMeasureSpec(renderHeight, View.MeasureSpec.EXACTLY);
+        webView.measure(w, h);
+        webView.layout(0, 0, renderWidth, renderHeight);
+
+        userAgent = webView.getSettings().getUserAgentString() + " ExtratorValor/0.6.1";
         webView.getSettings().setUserAgentString(userAgent);
         webView.addJavascriptInterface(new JsBridge(), "ExtratorValorBridge");
 
@@ -124,6 +146,7 @@ public class AutoRunService extends Service {
                 super.onPageFinished(view, url);
                 if (!finished) {
                     installJavascriptObserver();
+                    forceHdRender();
                     collectPerformanceEntries();
                 }
             }
@@ -133,31 +156,68 @@ public class AutoRunService extends Service {
     private void visitPage(int page) {
         if (finished || webView == null) return;
         String target = VALOR_URL + "/" + editionDate + "/page/" + page;
-        updateNotification("Carregando página " + page + " de 3...");
+        updateNotification("Carregando página " + page + " de 3 em modo HD...");
         webView.loadUrl(target);
 
         handler.postDelayed(() -> {
             if (finished || webView == null) return;
+            forceHdRender();
             collectPerformanceEntries();
-            String current = webView.getUrl();
-            String expected = "/" + editionDate + "/page/" + page;
-            if (current == null || !current.contains(expected)) {
-                failAttempt("A edição de hoje ainda não está disponível ou a sessão precisa de login.", true);
-                return;
-            }
-            if (page < 3) {
-                handler.postDelayed(() -> visitPage(page + 1), 1200);
-            } else {
-                handler.postDelayed(this::finishCollection, 2500);
-            }
-        }, 5000);
+
+            handler.postDelayed(() -> {
+                if (finished || webView == null) return;
+                forceHdRender();
+                collectPerformanceEntries();
+
+                String current = webView.getUrl();
+                String expected = "/" + editionDate + "/page/" + page;
+                if (current == null || !current.contains(expected)) {
+                    failAttempt("A edição de hoje ainda não está disponível ou a sessão precisa de login.", true);
+                    return;
+                }
+
+                if (bestImageUrl.get(page) == null) {
+                    failAttempt("A página " + page + " ainda não carregou um recurso de imagem válido.", true);
+                    return;
+                }
+
+                if (page < 3) {
+                    handler.postDelayed(() -> visitPage(page + 1), 1500);
+                } else {
+                    handler.postDelayed(this::finishCollection, 3500);
+                }
+            }, 3500);
+        }, 6500);
+    }
+
+    private void forceHdRender() {
+        if (webView == null || finished) return;
+        try {
+            int w = View.MeasureSpec.makeMeasureSpec(renderWidth, View.MeasureSpec.EXACTLY);
+            int h = View.MeasureSpec.makeMeasureSpec(renderHeight, View.MeasureSpec.EXACTLY);
+            webView.measure(w, h);
+            webView.layout(0, 0, renderWidth, renderHeight);
+            webView.evaluateJavascript(
+                    "(function(){try{window.scrollTo(0,0);window.dispatchEvent(new Event('resize'));" +
+                            "document.documentElement.dispatchEvent(new Event('resize'));}catch(e){}})();",
+                    null
+            );
+            Bitmap surface = Bitmap.createBitmap(renderWidth, renderHeight, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(surface);
+            webView.draw(canvas);
+            surface.recycle();
+        } catch (Throwable ignored) {}
     }
 
     private void finishCollection() {
         if (finished) return;
+        forceHdRender();
         collectPerformanceEntries();
         handler.postDelayed(() -> {
             if (finished) return;
+            forceHdRender();
+            collectPerformanceEntries();
+
             String[] urls = new String[3];
             for (int page = 1; page <= 3; page++) {
                 urls[page - 1] = bestImageUrl.get(page);
@@ -166,9 +226,9 @@ public class AutoRunService extends Service {
                     return;
                 }
             }
-            updateNotification("Páginas localizadas. Gerando PDFs em alta qualidade...");
+            updateNotification("Páginas localizadas. Validando e baixando em alta qualidade...");
             new Thread(() -> buildAndSend(urls)).start();
-        }, 1800);
+        }, 3000);
     }
 
     private void buildAndSend(String[] urls) {
@@ -177,7 +237,7 @@ public class AutoRunService extends Service {
             String referer = VALOR_URL + "/" + editionDate + "/page/1";
             for (int i = 0; i < 3; i++) {
                 final int page = i + 1;
-                runOnMain(() -> updateNotification("Baixando página " + page + " em alta qualidade..."));
+                runOnMain(() -> updateNotification("Baixando página " + page + " em alta qualidade real..."));
                 bitmaps[i] = AutoPdfHelper.downloadBitmap(urls[i], userAgent, referer);
             }
 
@@ -190,15 +250,15 @@ public class AutoRunService extends Service {
 
             AutoPdfHelper.PdfResult[] pdfs = AutoPdfHelper.createAndSaveSeparatePdfs(getContentResolver(), bitmaps, names);
             String secret = getSharedPreferences(ScheduleHelper.PREFS, MODE_PRIVATE).getString(PREF_SECRET, "");
-            runOnMain(() -> updateNotification("Enviando os 3 PDFs pelo Gmail..."));
+            runOnMain(() -> updateNotification("Qualidade HD confirmada. Enviando os 3 PDFs pelo Gmail..."));
             AutoPdfHelper.sendToAppsScript(APPS_SCRIPT_URL, secret, pdfs);
 
             getSharedPreferences(ScheduleHelper.PREFS, MODE_PRIVATE)
                     .edit().putString(PREF_LAST_AUTO_SENT, editionDate).apply();
             ScheduleHelper.cancelRetries(this);
-            runOnMain(() -> finishService("Concluído: 3 PDFs enviados automaticamente.", true));
+            runOnMain(() -> finishService("Concluído: 3 PDFs HD enviados automaticamente.", true));
         } catch (Exception e) {
-            runOnMain(() -> failAttempt("Falha automática: " + safeMessage(e), true));
+            runOnMain(() -> failAttempt("Falha/qualidade insuficiente no automático: " + safeMessage(e), true));
         }
     }
 
@@ -224,7 +284,7 @@ public class AutoRunService extends Service {
             if (pageValue == null || file == null) return;
             int page = Integer.parseInt(pageValue);
             if (page < 1 || page > 3) return;
-            int score = host.startsWith("i.") ? 100000 : 10000;
+            int score = host.startsWith("i.") ? 1000000 : 10000;
             score += safeInt(u.getQueryParameter("scale")) * 100;
             score += safeInt(u.getQueryParameter("width"));
             Integer old = bestImageScore.get(page);
@@ -237,7 +297,7 @@ public class AutoRunService extends Service {
 
     private void installJavascriptObserver() {
         if (webView == null) return;
-        String script = "(function(){try{if(window.__extratorValorAutoObserver){return;}window.__extratorValorAutoObserver=true;function evSend(){try{var r=(performance.getEntriesByType('resource')||[]).map(function(e){return e.name;});ExtratorValorBridge.reportResources(JSON.stringify(r));}catch(e){}}setInterval(evSend,1000);evSend();}catch(e){}})();";
+        String script = "(function(){try{if(window.__extratorValorAutoObserver){return;}window.__extratorValorAutoObserver=true;function evSend(){try{var r=(performance.getEntriesByType('resource')||[]).map(function(e){return e.name;});ExtratorValorBridge.reportResources(JSON.stringify(r));}catch(e){}}setInterval(evSend,800);evSend();}catch(e){}})();";
         webView.evaluateJavascript(script, null);
     }
 
@@ -323,7 +383,7 @@ public class AutoRunService extends Service {
                 "Extração automática do Valor",
                 NotificationManager.IMPORTANCE_LOW
         );
-        channel.setDescription("Execução automática das páginas 1, 2 e 3 às 04:00 em dias úteis.");
+        channel.setDescription("Execução automática HD das páginas 1, 2 e 3 às 04:00 em dias úteis.");
         nm.createNotificationChannel(channel);
     }
 
