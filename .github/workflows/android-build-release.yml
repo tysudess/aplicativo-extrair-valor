@@ -47,32 +47,32 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-AUTO-04H-SEG-SEX.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-AUTO-04H-SEG-SEX-HD.apk"
 
       - name: Publicar GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Extrator Valor Android v${{ env.VERSION }} — Automático 04:00 Seg–Sex
+          name: Extrator Valor Android v${{ env.VERSION }} — Automático 04:00 Seg–Sex HD
           target_commitish: main
           make_latest: true
           overwrite_files: true
           body: |
-            Versão automática do Extrator Valor Android.
+            Correção de qualidade do modo automático das 04:00.
 
-            - Mantém a alta qualidade das páginas 1, 2 e 3.
-            - Mantém os três PDFs separados no mesmo e-mail do Gmail.
-            - Execução automática às 04:00, somente de segunda a sexta-feira.
-            - Sábado e domingo não executa e não envia e-mail.
-            - Se a edição ainda não estiver disponível, tenta novamente às 04:10, 04:20 e 04:30.
-            - Nunca envia se não localizar corretamente as três páginas da edição do dia.
-            - Reagenda o próximo dia útil após cada execução.
-            - Reprograma o alarme depois de reiniciar o aparelho ou atualizar o aplicativo.
-            - Usa serviço em primeiro plano para continuar o processamento com a tela apagada.
-            - Apps Script já integrado ao aplicativo.
+            - O modo automático passa a pré-renderizar o PressReader fora da tela em viewport grande.
+            - Aguarda mais tempo para os recursos de alta resolução carregarem antes do download.
+            - Prioriza URLs autorizadas de imagem em maior qualidade.
+            - Testa escalas e larguras maiores antes de montar os PDFs.
+            - Não aceita mais imagem pequena apenas porque foi a melhor disponível naquele momento.
+            - Exige no mínimo 1800 px de largura em cada uma das três páginas.
+            - Se P1, P2 ou P3 ficar abaixo da qualidade mínima, não envia o e-mail e agenda nova tentativa.
+            - Mantém execução às 04:00, somente de segunda a sexta-feira.
+            - Mantém novas tentativas às 04:10, 04:20 e 04:30 quando necessário.
+            - Sábado e domingo não executa.
+            - Mantém 3 PDFs separados no mesmo e-mail.
             - Destino: imprensa30.monitoramento@gmail.com
             - Assunto: Monitoramento: CAPAS DE JORNAIS
 
-            Após instalar, abra o app uma vez, confirme o APP_SECRET e toque em ATIVAR AUTO 04:00.
-            Em Android 12 ou superior, autorize o acesso especial a Alarmes e lembretes quando solicitado.
+            Após atualizar o APK, mantenha ATIVAR AUTO 04:00 habilitado e o APP_SECRET salvo.
           files: dist/*.apk
