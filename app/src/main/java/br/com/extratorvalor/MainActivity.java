@@ -1,12 +1,13 @@
 package br.com.extratorvalor;
 
 import android.app.Activity;
-import android.app.AlarmManager;
 import android.app.AlertDialog;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -17,6 +18,7 @@ import android.provider.MediaStore;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.ServiceWorkerClient;
@@ -27,7 +29,9 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -54,9 +58,36 @@ public class MainActivity extends Activity {
     private static final Pattern EDITION_PATTERN = Pattern.compile("/valor-economico/(\\d{8})/page/\\d+");
     private static final String PREFS = "extrator_valor";
     private static final String PREF_SECRET = "apps_script_secret";
+    private static final String PREF_LAST_MANUAL_EPOCH = "last_manual_epoch";
+    private static final String PREF_LAST_MANUAL_SENT = "last_manual_sent";
 
+    private static final int C_BG = Color.rgb(246, 249, 253);
+    private static final int C_CARD = Color.WHITE;
+    private static final int C_NAVY = Color.rgb(8, 38, 87);
+    private static final int C_BLUE = Color.rgb(11, 101, 216);
+    private static final int C_TEAL = Color.rgb(0, 159, 170);
+    private static final int C_GREEN = Color.rgb(22, 148, 72);
+    private static final int C_TEXT = Color.rgb(28, 40, 65);
+    private static final int C_MUTED = Color.rgb(103, 118, 143);
+    private static final int C_LINE = Color.rgb(220, 229, 240);
+    private static final int C_SOFT_BLUE = Color.rgb(238, 246, 255);
+    private static final int C_SOFT_GREEN = Color.rgb(237, 249, 242);
+
+    private FrameLayout rootFrame;
+    private ScrollView dashboardScroll;
+    private LinearLayout dashboard;
+    private LinearLayout browserShell;
     private WebView webView;
+
     private TextView status;
+    private TextView autoBadge;
+    private TextView schedulePrimary;
+    private TextView lastRunTitle;
+    private TextView lastRunPdf;
+    private TextView lastRunMail;
+    private final TextView[] pageStatus = new TextView[3];
+    private Button autoButton;
+
     private final Map<String, Set<String>> captured = new LinkedHashMap<>();
     private final ArrayList<String> markers = new ArrayList<>();
     private final Map<Integer, String> bestImageUrl = new HashMap<>();
@@ -81,54 +112,229 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.WHITE);
+        getWindow().setStatusBarColor(C_BG);
+        getWindow().setNavigationBarColor(Color.WHITE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        }
 
-        TextView title = new TextView(this);
-        title.setText("Extrator Valor • AUTO 04:00 • Seg–Sex");
-        title.setTextSize(20);
-        title.setTextColor(Color.BLACK);
-        title.setPadding(24, 20, 24, 8);
-        root.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        rootFrame = new FrameLayout(this);
+        rootFrame.setBackgroundColor(C_BG);
 
-        status = new TextView(this);
-        status.setText("Envio Gmail configurado. Para automatizar, toque ATIVAR AUTO 04:00. Finais de semana são ignorados.");
-        status.setTextSize(14);
-        status.setPadding(24, 0, 24, 10);
-        root.addView(status, new LinearLayout.LayoutParams(-1, -2));
+        createDashboard();
+        createBrowserShell();
 
-        LinearLayout row1 = controlsRow();
-        row1.addView(button("ABRIR VALOR", v -> webView.loadUrl(VALOR_URL)));
-        row1.addView(button("GERAR 3 PDFs", v -> startAutoPdf()));
-        root.addView(row1, new LinearLayout.LayoutParams(-1, -2));
+        rootFrame.addView(dashboardScroll, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        rootFrame.addView(browserShell, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        browserShell.setVisibility(View.GONE);
 
-        LinearLayout row2 = controlsRow();
-        row2.addView(button("CONFIG E-MAIL", v -> showEmailConfig()));
-        row2.addView(button("ENVIAR 3 ÚLTIMOS", v -> sendLastPdfs()));
-        row2.addView(button("EXPORTAR LOG", v -> exportDiagnostic()));
-        root.addView(row2, new LinearLayout.LayoutParams(-1, -2));
+        setContentView(rootFrame);
+        setupWebView();
+        webView.loadUrl(VALOR_URL);
 
-        LinearLayout row3 = controlsRow();
-        row3.addView(button("INICIAR LOG", v -> startRecording()));
-        row3.addView(button("P1", v -> markPage(1)));
-        row3.addView(button("P2", v -> markPage(2)));
-        row3.addView(button("P3", v -> markPage(3)));
-        root.addView(row3, new LinearLayout.LayoutParams(-1, -2));
+        if (ScheduleHelper.isEnabled(this) && ScheduleHelper.canUseExactAlarms(this)) {
+            ScheduleHelper.scheduleNextWeekday0400(this);
+        }
+        refreshDashboard();
+    }
 
-        LinearLayout row4 = controlsRow();
-        row4.addView(button("ATIVAR AUTO 04:00", v -> enableDailyAutomation()));
-        row4.addView(button("DESATIVAR AUTO", v -> disableDailyAutomation()));
-        root.addView(row4, new LinearLayout.LayoutParams(-1, -2));
+    private void createDashboard() {
+        dashboardScroll = new ScrollView(this);
+        dashboardScroll.setFillViewport(true);
+        dashboardScroll.setBackgroundColor(C_BG);
+
+        dashboard = new LinearLayout(this);
+        dashboard.setOrientation(LinearLayout.VERTICAL);
+        dashboard.setPadding(dp(18), dp(18), dp(18), dp(28));
+        dashboardScroll.addView(dashboard, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        dashboard.addView(header, matchWrapBottom(18));
+
+        TextView logo = new TextView(this);
+        logo.setText("EV");
+        logo.setTextColor(Color.WHITE);
+        logo.setTextSize(20);
+        logo.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        logo.setGravity(Gravity.CENTER);
+        logo.setBackground(roundRect(C_BLUE, 16, 0, 0));
+        LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(dp(58), dp(58));
+        logoLp.setMargins(0, 0, dp(14), 0);
+        header.addView(logo, logoLp);
+
+        LinearLayout titleBox = new LinearLayout(this);
+        titleBox.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams titleBoxLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        header.addView(titleBox, titleBoxLp);
+
+        TextView title = text("Extrator Valor", 27, C_NAVY, true);
+        titleBox.addView(title);
+        TextView subtitle = text("Automação diária de capas", 14, C_MUTED, false);
+        subtitle.setPadding(0, dp(2), 0, 0);
+        titleBox.addView(subtitle);
+
+        Button settings = new Button(this);
+        settings.setAllCaps(false);
+        settings.setText("");
+        settings.setCompoundDrawablesWithIntrinsicBounds(android.R.drawable.ic_menu_manage, 0, 0, 0);
+        settings.setGravity(Gravity.CENTER);
+        settings.setBackground(roundRect(Color.WHITE, 18, C_LINE, 1));
+        settings.setElevation(dp(2));
+        settings.setOnClickListener(v -> showSettingsPanel());
+        header.addView(settings, new LinearLayout.LayoutParams(dp(52), dp(52)));
+
+        LinearLayout scheduleCard = card(C_SOFT_BLUE);
+        scheduleCard.setOrientation(LinearLayout.HORIZONTAL);
+        scheduleCard.setGravity(Gravity.CENTER_VERTICAL);
+        scheduleCard.setPadding(dp(16), dp(16), dp(16), dp(16));
+        dashboard.addView(scheduleCard, matchWrapBottom(14));
+
+        TextView clock = text("04:00", 20, C_BLUE, true);
+        clock.setGravity(Gravity.CENTER);
+        clock.setBackground(roundRect(Color.WHITE, 40, Color.rgb(202, 226, 252), 1));
+        LinearLayout.LayoutParams clockLp = new LinearLayout.LayoutParams(dp(76), dp(76));
+        clockLp.setMargins(0, 0, dp(16), 0);
+        scheduleCard.addView(clock, clockLp);
+
+        LinearLayout scheduleInfo = new LinearLayout(this);
+        scheduleInfo.setOrientation(LinearLayout.VERTICAL);
+        scheduleCard.addView(scheduleInfo, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        schedulePrimary = text("Próxima execução: 04:00", 18, C_NAVY, true);
+        scheduleInfo.addView(schedulePrimary);
+        TextView activeDays = text("Dias ativos: Seg–Sex", 15, C_TEAL, true);
+        activeDays.setPadding(0, dp(5), 0, dp(8));
+        scheduleInfo.addView(activeDays);
+
+        autoBadge = text("Automático desativado", 14, C_MUTED, true);
+        autoBadge.setGravity(Gravity.CENTER);
+        autoBadge.setPadding(dp(12), dp(7), dp(12), dp(7));
+        autoBadge.setBackground(roundRect(Color.WHITE, 18, C_LINE, 1));
+        scheduleInfo.addView(autoBadge, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout pagesRow = new LinearLayout(this);
+        pagesRow.setOrientation(LinearLayout.HORIZONTAL);
+        dashboard.addView(pagesRow, matchWrapBottom(14));
+        for (int i = 1; i <= 3; i++) {
+            LinearLayout pageCard = createPageCard(i);
+            LinearLayout.LayoutParams pageLp = new LinearLayout.LayoutParams(0, dp(158), 1f);
+            if (i > 1) pageLp.setMargins(dp(8), 0, 0, 0);
+            pagesRow.addView(pageCard, pageLp);
+        }
+
+        LinearLayout statusCard = card(Color.WHITE);
+        statusCard.setPadding(dp(16), dp(13), dp(16), dp(13));
+        status = text("Pronto para executar. Automação: " + automationStatusText(), 14, C_MUTED, false);
+        statusCard.addView(status);
+        dashboard.addView(statusCard, matchWrapBottom(14));
+
+        LinearLayout lastCard = card(Color.WHITE);
+        lastCard.setPadding(dp(18), dp(17), dp(18), dp(17));
+        dashboard.addView(lastCard, matchWrapBottom(16));
+
+        lastRunTitle = text("Última execução", 20, C_NAVY, true);
+        lastCard.addView(lastRunTitle);
+        lastRunPdf = text("3 PDFs gerados: —", 15, C_TEXT, false);
+        lastRunPdf.setPadding(0, dp(12), 0, dp(7));
+        lastCard.addView(lastRunPdf);
+        lastRunMail = text("3 anexos enviados: —", 15, C_TEXT, false);
+        lastCard.addView(lastRunMail);
+        TextView destination = text("Destino: imprensa30.monitoramento@gmail.com", 13, C_MUTED, false);
+        destination.setPadding(0, dp(10), 0, 0);
+        lastCard.addView(destination);
+
+        Button generate = actionButton("GERAR AGORA", true);
+        generate.setCompoundDrawablesWithIntrinsicBounds(android.R.drawable.ic_popup_sync, 0, 0, 0);
+        generate.setCompoundDrawablePadding(dp(9));
+        generate.setOnClickListener(v -> startAutoPdf());
+        dashboard.addView(generate, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(58)));
+
+        autoButton = actionButton("ATIVAR AUTO 04:00", false);
+        autoButton.setCompoundDrawablesWithIntrinsicBounds(android.R.drawable.ic_lock_idle_alarm, 0, 0, 0);
+        autoButton.setCompoundDrawablePadding(dp(9));
+        autoButton.setOnClickListener(v -> {
+            if (ScheduleHelper.isEnabled(this) && ScheduleHelper.canUseExactAlarms(this)) {
+                Toast.makeText(this, "Automação já está ativa para 04:00 em dias úteis", Toast.LENGTH_SHORT).show();
+            } else {
+                enableDailyAutomation();
+            }
+        });
+        LinearLayout.LayoutParams autoLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(58));
+        autoLp.setMargins(0, dp(10), 0, 0);
+        dashboard.addView(autoButton, autoLp);
+
+        TextView weekend = text("Sem execução aos fins de semana • novas tentativas 04:10 / 04:20 / 04:30 quando necessário", 12, C_MUTED, false);
+        weekend.setGravity(Gravity.CENTER);
+        weekend.setPadding(dp(12), dp(16), dp(12), 0);
+        dashboard.addView(weekend);
+    }
+
+    private LinearLayout createPageCard(int page) {
+        LinearLayout card = card(Color.WHITE);
+        card.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.setPadding(dp(10), dp(12), dp(10), dp(10));
+
+        TextView label = text("Página " + page, 14, C_NAVY, true);
+        card.addView(label);
+
+        TextView newspaper = text("▤", 39, C_BLUE, false);
+        newspaper.setGravity(Gravity.CENTER);
+        newspaper.setPadding(0, dp(4), 0, dp(2));
+        card.addView(newspaper, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(62)));
+
+        pageStatus[page - 1] = text("Alta qualidade HD", 12, C_GREEN, true);
+        pageStatus[page - 1].setGravity(Gravity.CENTER);
+        card.addView(pageStatus[page - 1]);
+        return card;
+    }
+
+    private void createBrowserShell() {
+        browserShell = new LinearLayout(this);
+        browserShell.setOrientation(LinearLayout.VERTICAL);
+        browserShell.setBackgroundColor(Color.WHITE);
+
+        LinearLayout toolbar = new LinearLayout(this);
+        toolbar.setOrientation(LinearLayout.HORIZONTAL);
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setPadding(dp(10), dp(9), dp(10), dp(9));
+        toolbar.setBackgroundColor(C_BG);
+        browserShell.addView(toolbar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
+
+        Button back = compactButton("‹ PAINEL");
+        back.setOnClickListener(v -> showDashboard());
+        toolbar.addView(back, new LinearLayout.LayoutParams(dp(104), dp(46)));
+
+        TextView browserTitle = text("Valor Econômico • Sessão autorizada", 16, C_NAVY, true);
+        browserTitle.setGravity(Gravity.CENTER);
+        toolbar.addView(browserTitle, new LinearLayout.LayoutParams(0, dp(46), 1f));
+
+        Button reload = compactButton("↻");
+        reload.setOnClickListener(v -> webView.reload());
+        toolbar.addView(reload, new LinearLayout.LayoutParams(dp(52), dp(46)));
 
         webView = new WebView(this);
+        browserShell.addView(webView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+    }
+
+    private void setupWebView() {
         webView.setBackgroundColor(Color.WHITE);
         webView.getSettings().setJavaScriptEnabled(true);
         webView.getSettings().setDomStorageEnabled(true);
         webView.getSettings().setDatabaseEnabled(true);
         webView.getSettings().setLoadsImagesAutomatically(true);
         webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
-        userAgent = webView.getSettings().getUserAgentString() + " ExtratorValor/0.6.0";
+        userAgent = webView.getSettings().getUserAgentString() + " ExtratorValor/0.7.0";
         webView.getSettings().setUserAgentString(userAgent);
         webView.addJavascriptInterface(new JsBridge(), "ExtratorValorBridge");
 
@@ -171,50 +377,187 @@ public class MainActivity extends Activity {
                     installJavascriptObserver();
                     collectPerformanceEntries();
                 }
-                if (!autoInProgress) status.setText("Página carregada. Automação: " + automationStatusText());
+                if (!autoInProgress && status != null) {
+                    status.setText("Sessão do Valor carregada. Automação: " + automationStatusText());
+                }
             }
         });
-
-        root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
-        setContentView(root);
-        webView.loadUrl(VALOR_URL);
-
-        if (ScheduleHelper.isEnabled(this) && ScheduleHelper.canUseExactAlarms(this)) {
-            ScheduleHelper.scheduleNextWeekday0400(this);
-        }
     }
 
-    private LinearLayout controlsRow() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(12, 0, 12, 6);
+    private void showDashboard() {
+        browserShell.setVisibility(View.GONE);
+        dashboardScroll.setVisibility(View.VISIBLE);
+        refreshDashboard();
+    }
+
+    private void showBrowser() {
+        dashboardScroll.setVisibility(View.GONE);
+        browserShell.setVisibility(View.VISIBLE);
+        if (webView.getUrl() == null) webView.loadUrl(VALOR_URL);
+    }
+
+    private void showSettingsPanel() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(10), dp(18), dp(10));
+        scroll.addView(box);
+
+        box.addView(settingsInfo("Apps Script integrado", "Conectado ao envio automático por Gmail"));
+        box.addView(settingsInfo(
+                getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_SECRET, "").isEmpty()
+                        ? "APP_SECRET não configurado" : "APP_SECRET configurado",
+                "Chave salva somente neste aparelho"));
+        box.addView(settingsInfo("Envio por Gmail", "imprensa30.monitoramento@gmail.com"));
+        box.addView(settingsInfo("Tentativas automáticas", "04:10 / 04:20 / 04:30 quando necessário"));
+
+        Button secret = settingsAction("Configurar APP_SECRET");
+        Button open = settingsAction("Abrir Valor / Login");
+        Button send = settingsAction("Enviar 3 últimos PDFs");
+        Button diag = settingsAction("Ferramentas de diagnóstico");
+        Button disable = settingsAction("Desativar automação 04:00");
+
+        box.addView(secret, matchWrapTop(8));
+        box.addView(open, matchWrapTop(8));
+        box.addView(send, matchWrapTop(8));
+        box.addView(diag, matchWrapTop(8));
+        if (ScheduleHelper.isEnabled(this)) box.addView(disable, matchWrapTop(8));
+
+        TextView version = text("Extrator Valor • versão 0.7.0", 12, C_MUTED, false);
+        version.setGravity(Gravity.CENTER);
+        version.setPadding(0, dp(16), 0, dp(4));
+        box.addView(version);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Configurações")
+                .setView(scroll)
+                .setNegativeButton("FECHAR", null)
+                .create();
+
+        secret.setOnClickListener(v -> { dialog.dismiss(); showEmailConfig(); });
+        open.setOnClickListener(v -> { dialog.dismiss(); showBrowser(); });
+        send.setOnClickListener(v -> { dialog.dismiss(); sendLastPdfs(); });
+        diag.setOnClickListener(v -> { dialog.dismiss(); showDiagnosticTools(); });
+        disable.setOnClickListener(v -> { dialog.dismiss(); disableDailyAutomation(); refreshDashboard(); });
+        dialog.show();
+    }
+
+    private void showDiagnosticTools() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(8), dp(18), dp(8));
+
+        Button start = settingsAction("Iniciar log");
+        Button p1 = settingsAction("Marcar P1");
+        Button p2 = settingsAction("Marcar P2");
+        Button p3 = settingsAction("Marcar P3");
+        Button export = settingsAction("Exportar log TXT");
+        box.addView(start, matchWrapTop(6));
+        box.addView(p1, matchWrapTop(6));
+        box.addView(p2, matchWrapTop(6));
+        box.addView(p3, matchWrapTop(6));
+        box.addView(export, matchWrapTop(6));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Diagnóstico")
+                .setMessage("Use somente quando precisar analisar o carregamento das páginas.")
+                .setView(box)
+                .setNegativeButton("FECHAR", null)
+                .create();
+        start.setOnClickListener(v -> startRecording());
+        p1.setOnClickListener(v -> markPage(1));
+        p2.setOnClickListener(v -> markPage(2));
+        p3.setOnClickListener(v -> markPage(3));
+        export.setOnClickListener(v -> exportDiagnostic());
+        dialog.show();
+    }
+
+    private LinearLayout settingsInfo(String title, String subtitle) {
+        LinearLayout row = card(Color.WHITE);
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        TextView t = text(title, 15, C_NAVY, true);
+        row.addView(t);
+        TextView s = text(subtitle, 12, C_MUTED, false);
+        s.setPadding(0, dp(3), 0, 0);
+        row.addView(s);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 0, 0, dp(8));
+        row.setLayoutParams(lp);
         return row;
     }
 
-    private Button button(String text, View.OnClickListener listener) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setTextSize(11);
-        b.setAllCaps(false);
-        b.setOnClickListener(listener);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
-        lp.setMargins(3, 0, 3, 0);
-        b.setLayoutParams(lp);
-        return b;
+    private void refreshDashboard() {
+        if (autoBadge == null) return;
+        boolean enabled = ScheduleHelper.isEnabled(this) && ScheduleHelper.canUseExactAlarms(this);
+        if (enabled) {
+            autoBadge.setText("✓ Automático ativo");
+            autoBadge.setTextColor(C_GREEN);
+            autoBadge.setBackground(roundRect(C_SOFT_GREEN, 18, Color.rgb(193, 232, 207), 1));
+            autoButton.setText("✓ AUTOMÁTICO ATIVO • 04:00");
+        } else if (ScheduleHelper.isEnabled(this)) {
+            autoBadge.setText("Aguardando permissão de alarme");
+            autoBadge.setTextColor(C_BLUE);
+            autoBadge.setBackground(roundRect(C_SOFT_BLUE, 18, Color.rgb(200, 222, 249), 1));
+            autoButton.setText("AUTORIZAR AUTO 04:00");
+        } else {
+            autoBadge.setText("Automático desativado");
+            autoBadge.setTextColor(C_MUTED);
+            autoBadge.setBackground(roundRect(Color.WHITE, 18, C_LINE, 1));
+            autoButton.setText("ATIVAR AUTO 04:00");
+        }
+
+        schedulePrimary.setText("Próxima execução: 04:00");
+        if (!autoInProgress && status != null) {
+            status.setText("Pronto para executar. Automação: " + automationStatusText());
+        }
+
+        SharedPreferences schedulePrefs = getSharedPreferences(ScheduleHelper.PREFS, MODE_PRIVATE);
+        String lastAuto = schedulePrefs.getString("last_auto_sent_date", "");
+        SharedPreferences local = getSharedPreferences(PREFS, MODE_PRIVATE);
+        long manualEpoch = local.getLong(PREF_LAST_MANUAL_EPOCH, 0L);
+        boolean manualSent = local.getBoolean(PREF_LAST_MANUAL_SENT, false);
+
+        if (lastAuto != null && !lastAuto.isEmpty()) {
+            lastRunTitle.setText("Última execução • Automática " + formatYmd(lastAuto));
+            lastRunPdf.setText("✓ 3 PDFs gerados em alta qualidade");
+            lastRunMail.setText("✓ 3 anexos enviados pelo Gmail");
+        } else if (manualEpoch > 0) {
+            String when = new SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(new Date(manualEpoch));
+            lastRunTitle.setText("Última execução • Manual " + when);
+            lastRunPdf.setText("✓ 3 PDFs gerados em alta qualidade");
+            lastRunMail.setText(manualSent ? "✓ 3 anexos enviados pelo Gmail" : "PDFs salvos • envio não realizado");
+        } else {
+            lastRunTitle.setText("Última execução");
+            lastRunPdf.setText("3 PDFs gerados: —");
+            lastRunMail.setText("3 anexos enviados: —");
+        }
+    }
+
+    private String formatYmd(String ymd) {
+        if (ymd == null || ymd.length() != 8) return ymd == null ? "" : ymd;
+        return ymd.substring(6, 8) + "/" + ymd.substring(4, 6) + "/" + ymd.substring(0, 4);
+    }
+
+    private void setPageState(int page, String text, int color) {
+        if (page < 1 || page > 3 || pageStatus[page - 1] == null) return;
+        runOnUiThread(() -> {
+            pageStatus[page - 1].setText(text);
+            pageStatus[page - 1].setTextColor(color);
+        });
     }
 
     private void enableDailyAutomation() {
         String secret = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_SECRET, "");
         if (secret == null || secret.trim().isEmpty()) {
-            Toast.makeText(this, "Configure primeiro o APP_SECRET em CONFIG E-MAIL", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Configure primeiro o APP_SECRET", Toast.LENGTH_LONG).show();
             showEmailConfig();
             return;
         }
 
         ScheduleHelper.setEnabled(this, true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !ScheduleHelper.canUseExactAlarms(this)) {
-            status.setText("Automação ativada. Autorize 'Alarmes e lembretes' na tela do Android e volte ao app.");
+            status.setText("Autorize 'Alarmes e lembretes' no Android e volte ao app.");
             try {
                 Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
                         Uri.parse("package:" + getPackageName()));
@@ -222,15 +565,17 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 Toast.makeText(this, "Abra Configurações > Acesso especial > Alarmes e lembretes e autorize o Extrator Valor.", Toast.LENGTH_LONG).show();
             }
+            refreshDashboard();
             return;
         }
 
         if (ScheduleHelper.scheduleNextWeekday0400(this)) {
-            status.setText("Automação ATIVA: segunda a sexta às 04:00. Sábado e domingo não executa.");
+            status.setText("Automação ATIVA: segunda a sexta às 04:00.");
             Toast.makeText(this, "Automação 04:00 ativada", Toast.LENGTH_SHORT).show();
         } else {
             status.setText("Não consegui programar o alarme. Verifique a permissão de Alarmes e lembretes.");
         }
+        refreshDashboard();
     }
 
     private void disableDailyAutomation() {
@@ -238,6 +583,7 @@ public class MainActivity extends Activity {
         ScheduleHelper.cancelAll(this);
         status.setText("Automação 04:00 DESATIVADA.");
         Toast.makeText(this, "Automação desativada", Toast.LENGTH_SHORT).show();
+        refreshDashboard();
     }
 
     private String automationStatusText() {
@@ -254,10 +600,12 @@ public class MainActivity extends Activity {
         markers.clear();
         recording = true;
         autoInProgress = true;
+        for (int i = 1; i <= 3; i++) setPageState(i, "Aguardando...", C_MUTED);
         markers.add("AUTO_INICIO " + now());
         handler.removeCallbacks(performancePoll);
         handler.post(performancePoll);
 
+        status.setText("Iniciando geração das páginas 1–3 em alta qualidade...");
         editionDate = extractEditionDate(webView.getUrl());
         if (editionDate == null) {
             status.setText("Localizando a edição atual do Valor...");
@@ -265,7 +613,7 @@ public class MainActivity extends Activity {
             handler.postDelayed(() -> {
                 editionDate = extractEditionDate(webView.getUrl());
                 if (editionDate == null) {
-                    failAuto("Não consegui identificar a edição. Abra a edição do dia e tente novamente.");
+                    failAuto("Não consegui identificar a edição. Abra o Valor / Login e tente novamente.");
                 } else {
                     visitAutoPage(1);
                 }
@@ -279,11 +627,13 @@ public class MainActivity extends Activity {
         if (!autoInProgress) return;
         String url = VALOR_URL + "/" + editionDate + "/page/" + page;
         status.setText("Carregando página " + page + " de 3...");
+        setPageState(page, "Carregando...", C_BLUE);
         markers.add("AUTO_PAGINA_" + page + " " + now());
         webView.loadUrl(url);
         handler.postDelayed(() -> {
             collectPerformanceEntries();
             capture(webView.getUrl(), "TOP_PAGE");
+            setPageState(page, "Imagem localizada", C_TEAL);
             if (page < 3) handler.postDelayed(() -> visitAutoPage(page + 1), 1200);
             else handler.postDelayed(this::finishAutoPdf, 2500);
         }, 4500);
@@ -299,7 +649,8 @@ public class MainActivity extends Activity {
             for (int i = 1; i <= 3; i++) urls[i - 1] = bestImageUrl.get(i);
             for (int i = 0; i < 3; i++) {
                 if (urls[i] == null) {
-                    failAuto("Não encontrei a imagem autorizada da página " + (i + 1) + ". Use EXPORTAR LOG e me envie o TXT.");
+                    setPageState(i + 1, "Não localizada", Color.rgb(190, 55, 55));
+                    failAuto("Não encontrei a imagem autorizada da página " + (i + 1) + ".");
                     return;
                 }
             }
@@ -317,6 +668,9 @@ public class MainActivity extends Activity {
                 final int p = i + 1;
                 runOnUiThread(() -> status.setText("Baixando página " + p + " em alta qualidade..."));
                 bitmaps[i] = AutoPdfHelper.downloadBitmap(urls[i], userAgent, referer);
+                final int width = bitmaps[i].getWidth();
+                final int height = bitmaps[i].getHeight();
+                setPageState(p, "HD " + width + "×" + height + " ✓", C_GREEN);
             }
 
             String formatted = date.substring(0, 4) + "-" + date.substring(4, 6) + "-" + date.substring(6, 8);
@@ -330,13 +684,21 @@ public class MainActivity extends Activity {
             lastPdfs = AutoPdfHelper.createAndSaveSeparatePdfs(getContentResolver(), bitmaps, names);
 
             String secret = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_SECRET, "");
+            boolean sent = false;
             if (!secret.isEmpty()) {
                 runOnUiThread(() -> status.setText("3 PDFs salvos. Enviando para o Gmail..."));
                 AutoPdfHelper.sendToAppsScript(APPS_SCRIPT_URL, secret, lastPdfs);
+                sent = true;
                 runOnUiThread(() -> status.setText("Concluído: 3 PDFs separados enviados por Gmail."));
             } else {
-                runOnUiThread(() -> status.setText("3 PDFs salvos. Informe o APP_SECRET em CONFIG E-MAIL para envio automático."));
+                runOnUiThread(() -> status.setText("3 PDFs salvos. Configure o APP_SECRET para envio automático."));
             }
+
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putLong(PREF_LAST_MANUAL_EPOCH, System.currentTimeMillis())
+                    .putBoolean(PREF_LAST_MANUAL_SENT, sent)
+                    .apply();
+            runOnUiThread(this::refreshDashboard);
         } catch (Exception e) {
             runOnUiThread(() -> status.setText("Erro ao gerar/enviar PDFs: " + e.getMessage()));
         } finally {
@@ -356,11 +718,10 @@ public class MainActivity extends Activity {
         SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(30, 10, 30, 0);
+        box.setPadding(dp(22), dp(10), dp(22), 0);
 
-        TextView info = new TextView(this);
-        info.setText("Apps Script: configurado\nDestino: imprensa30.monitoramento@gmail.com\nAssunto: Monitoramento: CAPAS DE JORNAIS");
-        info.setPadding(0, 0, 0, 12);
+        TextView info = text("Apps Script: integrado\nDestino: imprensa30.monitoramento@gmail.com\nAssunto: Monitoramento: CAPAS DE JORNAIS", 13, C_MUTED, false);
+        info.setPadding(0, 0, 0, dp(12));
         box.addView(info);
 
         EditText secret = new EditText(this);
@@ -375,6 +736,7 @@ public class MainActivity extends Activity {
                 .setPositiveButton("SALVAR", (d, w) -> {
                     sp.edit().putString(PREF_SECRET, secret.getText().toString()).apply();
                     Toast.makeText(this, "APP_SECRET salvo no aparelho", Toast.LENGTH_SHORT).show();
+                    refreshDashboard();
                 })
                 .setNegativeButton("CANCELAR", null)
                 .show();
@@ -395,7 +757,14 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 AutoPdfHelper.sendToAppsScript(APPS_SCRIPT_URL, secret, lastPdfs);
-                runOnUiThread(() -> status.setText("E-mail enviado com 3 anexos separados."));
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        .putLong(PREF_LAST_MANUAL_EPOCH, System.currentTimeMillis())
+                        .putBoolean(PREF_LAST_MANUAL_SENT, true)
+                        .apply();
+                runOnUiThread(() -> {
+                    status.setText("E-mail enviado com 3 anexos separados.");
+                    refreshDashboard();
+                });
             } catch (Exception e) {
                 runOnUiThread(() -> status.setText("Falha no envio: " + e.getMessage()));
             }
@@ -420,12 +789,12 @@ public class MainActivity extends Activity {
         collectPerformanceEntries();
         handler.removeCallbacks(performancePoll);
         handler.post(performancePoll);
-        status.setText("Log ativo. Navegue pelas páginas e marque P1/P2/P3.");
+        status.setText("Log ativo. Navegue no Valor e marque P1/P2/P3.");
     }
 
     private void markPage(int page) {
         if (!recording) {
-            Toast.makeText(this, "Toque INICIAR LOG primeiro", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Inicie o log primeiro", Toast.LENGTH_SHORT).show();
             return;
         }
         collectPerformanceEntries();
@@ -437,7 +806,7 @@ public class MainActivity extends Activity {
         if (page == 3) {
             recording = false;
             handler.removeCallbacks(performancePoll);
-            status.setText("Log concluído. Toque EXPORTAR LOG.");
+            status.setText("Log concluído. Exporte o TXT em Diagnóstico.");
         }
     }
 
@@ -543,7 +912,7 @@ public class MainActivity extends Activity {
 
     private String buildDiagnostic() {
         StringBuilder sb = new StringBuilder();
-        sb.append("Extrator Valor Android v0.6.0 - Auto 04:00 Seg-Sex\n");
+        sb.append("Extrator Valor Android v0.7.0 - Layout Moderno + Auto HD\n");
         sb.append("Gerado: ").append(now()).append("\n\nMARCADORES\n");
         for (String m : markers) sb.append(m).append('\n');
         sb.append("\nRECURSOS CANDIDATOS\n");
@@ -584,12 +953,91 @@ public class MainActivity extends Activity {
         return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
     }
 
+    private TextView text(String value, float size, int color, boolean bold) {
+        TextView view = new TextView(this);
+        view.setText(value);
+        view.setTextSize(size);
+        view.setTextColor(color);
+        if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return view;
+    }
+
+    private LinearLayout card(int backgroundColor) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(roundRect(backgroundColor, 18, C_LINE, 1));
+        card.setElevation(dp(3));
+        return card;
+    }
+
+    private GradientDrawable roundRect(int fill, int radiusDp, int strokeColor, int strokeDp) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setCornerRadius(dp(radiusDp));
+        if (strokeDp > 0) drawable.setStroke(dp(strokeDp), strokeColor);
+        return drawable;
+    }
+
+    private Button actionButton(String label, boolean filled) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(16);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setGravity(Gravity.CENTER);
+        button.setTextColor(filled ? Color.WHITE : C_BLUE);
+        button.setBackground(roundRect(filled ? C_BLUE : Color.WHITE, 15, C_BLUE, filled ? 0 : 2));
+        button.setElevation(filled ? dp(3) : dp(1));
+        return button;
+    }
+
+    private Button compactButton(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setTextColor(C_BLUE);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setBackground(roundRect(Color.WHITE, 14, C_LINE, 1));
+        return button;
+    }
+
+    private Button settingsAction(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(14);
+        button.setTextColor(C_NAVY);
+        button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        button.setPadding(dp(16), 0, dp(16), 0);
+        button.setBackground(roundRect(C_SOFT_BLUE, 14, C_LINE, 1));
+        return button;
+    }
+
+    private LinearLayout.LayoutParams matchWrapBottom(int bottomDp) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 0, 0, dp(bottomDp));
+        return lp;
+    }
+
+    private LinearLayout.LayoutParams matchWrapTop(int topDp) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+        lp.setMargins(0, dp(topDp), 0, 0);
+        return lp;
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
     @Override protected void onResume() {
         super.onResume();
         if (ScheduleHelper.isEnabled(this) && ScheduleHelper.canUseExactAlarms(this)) {
             ScheduleHelper.scheduleNextWeekday0400(this);
-            if (status != null) status.setText("Automação ATIVA: segunda a sexta às 04:00. Sábado e domingo não executa.");
         }
+        refreshDashboard();
     }
 
     @Override protected void onDestroy() {
@@ -598,7 +1046,11 @@ public class MainActivity extends Activity {
     }
 
     @Override public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) webView.goBack();
-        else super.onBackPressed();
+        if (browserShell != null && browserShell.getVisibility() == View.VISIBLE) {
+            if (webView != null && webView.canGoBack()) webView.goBack();
+            else showDashboard();
+        } else {
+            super.onBackPressed();
+        }
     }
 }
