@@ -47,32 +47,35 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-AUTO-04H-SEG-SEX-HD.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-LAYOUT-MODERNO-AUTO-HD.apk"
 
       - name: Publicar GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Extrator Valor Android v${{ env.VERSION }} — Automático 04:00 Seg–Sex HD
+          name: Extrator Valor Android v${{ env.VERSION }} — Layout Moderno + Automático HD
           target_commitish: main
           make_latest: true
           overwrite_files: true
           body: |
-            Correção de qualidade do modo automático das 04:00.
+            Nova interface moderna do Extrator Valor, preservando integralmente o motor automático HD aprovado.
 
-            - O modo automático passa a pré-renderizar o PressReader fora da tela em viewport grande.
-            - Aguarda mais tempo para os recursos de alta resolução carregarem antes do download.
-            - Prioriza URLs autorizadas de imagem em maior qualidade.
-            - Testa escalas e larguras maiores antes de montar os PDFs.
-            - Não aceita mais imagem pequena apenas porque foi a melhor disponível naquele momento.
-            - Exige no mínimo 1800 px de largura em cada uma das três páginas.
-            - Se P1, P2 ou P3 ficar abaixo da qualidade mínima, não envia o e-mail e agenda nova tentativa.
-            - Mantém execução às 04:00, somente de segunda a sexta-feira.
-            - Mantém novas tentativas às 04:10, 04:20 e 04:30 quando necessário.
+            - Dashboard moderno inspirado na prévia aprovada.
+            - Cartão de próxima execução às 04:00 e status da automação.
+            - Indicadores separados para Página 1, Página 2 e Página 3.
+            - Mostra resolução HD obtida durante a geração manual.
+            - Resumo da última execução e do envio dos 3 anexos.
+            - Botão principal GERAR AGORA.
+            - Controle visual da automação 04:00 Seg–Sex.
+            - PressReader continua integrado em tela própria para login/revisão.
+            - Configurações, envio manual e diagnóstico ficam organizados em painel separado.
+            - Mantém mínimo de 1800 px de largura por página no motor HD.
+            - Mantém tentativas automáticas 04:10 / 04:20 / 04:30 quando necessário.
             - Sábado e domingo não executa.
             - Mantém 3 PDFs separados no mesmo e-mail.
             - Destino: imprensa30.monitoramento@gmail.com
             - Assunto: Monitoramento: CAPAS DE JORNAIS
+            - Apps Script permanece integrado.
 
-            Após atualizar o APK, mantenha ATIVAR AUTO 04:00 habilitado e o APP_SECRET salvo.
+            Após instalar, confirme o APP_SECRET e mantenha a automação 04:00 ativa.
           files: dist/*.apk
