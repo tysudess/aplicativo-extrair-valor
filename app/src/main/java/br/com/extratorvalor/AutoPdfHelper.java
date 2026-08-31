@@ -28,9 +28,10 @@ import java.util.List;
 import java.util.Set;
 
 final class AutoPdfHelper {
-    private static final int TARGET_WIDTH = 2000;
-    private static final int[] HIGH_SCALES = {312, 286, 260, 234, 208, 182, 156, 130, 104};
-    private static final int[] HIGH_WIDTHS = {2800, 2500, 2200, 2000, 1800, 1600};
+    private static final int TARGET_WIDTH = 2200;
+    private static final int MIN_ACCEPTABLE_WIDTH = 1800;
+    private static final int[] HIGH_SCALES = {416, 390, 364, 338, 312, 286, 260, 234, 208, 182, 156, 130, 104};
+    private static final int[] HIGH_WIDTHS = {3200, 3000, 2800, 2600, 2400, 2200, 2000, 1800, 1600};
 
     static final class PdfResult {
         final byte[] bytes;
@@ -92,8 +93,15 @@ final class AutoPdfHelper {
             }
         }
 
-        if (best != null) return best;
-        throw first != null ? first : new IllegalStateException("URL de imagem inválida");
+        if (best != null && best.getWidth() >= MIN_ACCEPTABLE_WIDTH) return best;
+
+        String detail = best == null
+                ? "nenhuma imagem válida"
+                : (best.getWidth() + "x" + best.getHeight() + " px");
+        if (best != null && !best.isRecycled()) best.recycle();
+        throw new IllegalStateException(
+                "qualidade insuficiente: " + detail + "; mínimo exigido " + MIN_ACCEPTABLE_WIDTH + " px de largura"
+        );
     }
 
     private static List<String> candidates(String rawUrl) {
@@ -134,6 +142,11 @@ final class AutoPdfHelper {
             for (int i = 0; i < 3; i++) {
                 Bitmap bm = pages[i];
                 if (bm == null) throw new IllegalStateException("Página " + (i + 1) + " ausente");
+                if (bm.getWidth() < MIN_ACCEPTABLE_WIDTH) {
+                    throw new IllegalStateException(
+                            "Página " + (i + 1) + " abaixo da qualidade mínima: " + bm.getWidth() + "x" + bm.getHeight() + " px"
+                    );
+                }
                 byte[] bytes = createSinglePagePdfBytes(bm);
                 Uri uri = savePdf(resolver, bytes, fileNames[i]);
                 results[i] = new PdfResult(bytes, uri, fileNames[i]);
