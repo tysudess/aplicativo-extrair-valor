@@ -39,6 +39,9 @@ jobs:
       - name: Aplicar correções v0.7.2
         run: python3 scripts/patch_v072.py
 
+      - name: Aplicar correções v0.7.3
+        run: python3 scripts/patch_v073.py
+
       - name: Detectar versão
         shell: bash
         run: |
@@ -53,31 +56,29 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-DISPARO-DIRETO-DIAGNOSTICO-AUTO-HD.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-AUTO-PAGINA-INTEIRA-HD-DIAGNOSTICO.apk"
 
       - name: Publicar GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Extrator Valor Android v${{ env.VERSION }} — Disparo Direto + Diagnóstico + Auto HD
+          name: Extrator Valor Android v${{ env.VERSION }} — Automático Página Inteira HD + Diagnóstico
           target_commitish: main
           make_latest: true
           overwrite_files: true
           body: |
-            Correção do disparo automático em segundo plano e diagnóstico do agendamento.
+            Correção do automático após diagnóstico real de miniatura 417x417.
 
-            - AlarmManager agora dispara diretamente o serviço automático em primeiro plano.
-            - Remove a dependência do BroadcastReceiver intermediário para o alarme principal e retries.
-            - Mantém horário automático configurável; 04:00 continua sendo o padrão.
-            - Mantém tentativas +10 / +20 / +30 minutos.
-            - Continua sem executar sábado e domingo.
-            - Adiciona TESTAR AUTOMÁTICO EM 2 MIN em Configurações.
-            - Registra Último disparo e Último resultado no painel de Configurações.
-            - Mostra a data/hora real do próximo disparo programado.
-            - Teste automático não bloqueia o envio automático normal do mesmo dia.
-            - Mantém GERAR AGORA em HD sem abrir previamente a tela do Valor.
-            - Mantém ícone próprio, 3 PDFs separados e envio pelo Apps Script/Gmail.
-            - Mantém mínimo de 1800 px por página.
+            - Mantém o disparo direto do AlarmManager para o serviço automático.
+            - Mantém horário configurável e TESTAR AUTOMÁTICO EM 2 MIN.
+            - Mantém Último disparo e Último resultado.
+            - Rejeita miniaturas/tiles quadrados e recursos com proporção incompatível com página de jornal.
+            - Remove top/left/height/width e outros parâmetros de recorte ao promover uma URL autorizada para página inteira HD.
+            - Guarda vários candidatos por página e tenta alternativas antes de falhar.
+            - Aumenta o viewport e o tempo de aquecimento do WebView automático.
+            - Mantém mínimo de 1800 px de largura por página.
+            - Mantém 3 PDFs separados e envio pelo Apps Script/Gmail.
+            - Mantém execução somente de segunda a sexta-feira.
 
-            Para validar, ative a automação, abra Configurações e toque TESTAR AUTOMÁTICO EM 2 MIN. Feche o app e confira depois Último disparo e Último resultado.
+            Após instalar, use TESTAR AUTOMÁTICO EM 2 MIN e confira Último disparo/Último resultado.
           files: dist/*.apk
