@@ -36,6 +36,9 @@ jobs:
       - name: Aplicar correções v0.7.1
         run: python3 scripts/patch_v071.py
 
+      - name: Aplicar correções v0.7.2
+        run: python3 scripts/patch_v072.py
+
       - name: Detectar versão
         shell: bash
         run: |
@@ -50,32 +53,31 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-HORARIO-CONFIGURAVEL-ICONE-AUTO-HD.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-DISPARO-DIRETO-DIAGNOSTICO-AUTO-HD.apk"
 
       - name: Publicar GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Extrator Valor Android v${{ env.VERSION }} — Horário configurável + Ícone + Auto HD
+          name: Extrator Valor Android v${{ env.VERSION }} — Disparo Direto + Diagnóstico + Auto HD
           target_commitish: main
           make_latest: true
           overwrite_files: true
           body: |
-            Evolução do layout moderno com melhorias para testes e uso automático.
+            Correção do disparo automático em segundo plano e diagnóstico do agendamento.
 
-            - Novo ícone próprio do Extrator Valor no Android.
-            - Horário da geração automática agora pode ser escolhido pelo usuário.
-            - 04:00 permanece como horário padrão.
-            - Ao alterar o horário, o alarme é reagendado imediatamente.
-            - Tentativas automáticas passam a ocorrer em +10, +20 e +30 minutos a partir do horário escolhido.
-            - Continua sem executar aos sábados e domingos.
-            - Corrige GERAR AGORA no dashboard: o WebView é pré-renderizado em HD mesmo sem abrir a tela do Valor antes.
-            - Mantém mínimo de 1800 px de largura por página.
-            - Mantém as páginas 1, 2 e 3 em PDFs separados.
-            - Mantém envio no mesmo e-mail pelo Apps Script.
-            - Destino: imprensa30.monitoramento@gmail.com
-            - Assunto: Monitoramento: CAPAS DE JORNAIS
-            - Mantém login/sessão autorizada do PressReader.
+            - AlarmManager agora dispara diretamente o serviço automático em primeiro plano.
+            - Remove a dependência do BroadcastReceiver intermediário para o alarme principal e retries.
+            - Mantém horário automático configurável; 04:00 continua sendo o padrão.
+            - Mantém tentativas +10 / +20 / +30 minutos.
+            - Continua sem executar sábado e domingo.
+            - Adiciona TESTAR AUTOMÁTICO EM 2 MIN em Configurações.
+            - Registra Último disparo e Último resultado no painel de Configurações.
+            - Mostra a data/hora real do próximo disparo programado.
+            - Teste automático não bloqueia o envio automático normal do mesmo dia.
+            - Mantém GERAR AGORA em HD sem abrir previamente a tela do Valor.
+            - Mantém ícone próprio, 3 PDFs separados e envio pelo Apps Script/Gmail.
+            - Mantém mínimo de 1800 px por página.
 
-            Para testar, abra Configurações > Escolher horário automático e selecione um horário alguns minutos à frente.
+            Para validar, ative a automação, abra Configurações e toque TESTAR AUTOMÁTICO EM 2 MIN. Feche o app e confira depois Último disparo e Último resultado.
           files: dist/*.apk
