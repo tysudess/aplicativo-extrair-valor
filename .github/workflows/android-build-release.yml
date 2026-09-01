@@ -33,6 +33,9 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Aplicar correções v0.7.1
+        run: python3 scripts/patch_v071.py
+
       - name: Detectar versão
         shell: bash
         run: |
@@ -47,35 +50,32 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-LAYOUT-MODERNO-AUTO-HD.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/ExtratorValor-Android-v${VERSION}-HORARIO-CONFIGURAVEL-ICONE-AUTO-HD.apk"
 
       - name: Publicar GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Extrator Valor Android v${{ env.VERSION }} — Layout Moderno + Automático HD
+          name: Extrator Valor Android v${{ env.VERSION }} — Horário configurável + Ícone + Auto HD
           target_commitish: main
           make_latest: true
           overwrite_files: true
           body: |
-            Nova interface moderna do Extrator Valor, preservando integralmente o motor automático HD aprovado.
+            Evolução do layout moderno com melhorias para testes e uso automático.
 
-            - Dashboard moderno inspirado na prévia aprovada.
-            - Cartão de próxima execução às 04:00 e status da automação.
-            - Indicadores separados para Página 1, Página 2 e Página 3.
-            - Mostra resolução HD obtida durante a geração manual.
-            - Resumo da última execução e do envio dos 3 anexos.
-            - Botão principal GERAR AGORA.
-            - Controle visual da automação 04:00 Seg–Sex.
-            - PressReader continua integrado em tela própria para login/revisão.
-            - Configurações, envio manual e diagnóstico ficam organizados em painel separado.
-            - Mantém mínimo de 1800 px de largura por página no motor HD.
-            - Mantém tentativas automáticas 04:10 / 04:20 / 04:30 quando necessário.
-            - Sábado e domingo não executa.
-            - Mantém 3 PDFs separados no mesmo e-mail.
+            - Novo ícone próprio do Extrator Valor no Android.
+            - Horário da geração automática agora pode ser escolhido pelo usuário.
+            - 04:00 permanece como horário padrão.
+            - Ao alterar o horário, o alarme é reagendado imediatamente.
+            - Tentativas automáticas passam a ocorrer em +10, +20 e +30 minutos a partir do horário escolhido.
+            - Continua sem executar aos sábados e domingos.
+            - Corrige GERAR AGORA no dashboard: o WebView é pré-renderizado em HD mesmo sem abrir a tela do Valor antes.
+            - Mantém mínimo de 1800 px de largura por página.
+            - Mantém as páginas 1, 2 e 3 em PDFs separados.
+            - Mantém envio no mesmo e-mail pelo Apps Script.
             - Destino: imprensa30.monitoramento@gmail.com
             - Assunto: Monitoramento: CAPAS DE JORNAIS
-            - Apps Script permanece integrado.
+            - Mantém login/sessão autorizada do PressReader.
 
-            Após instalar, confirme o APP_SECRET e mantenha a automação 04:00 ativa.
+            Para testar, abra Configurações > Escolher horário automático e selecione um horário alguns minutos à frente.
           files: dist/*.apk
